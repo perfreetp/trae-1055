@@ -3,7 +3,18 @@ import { WorkOrder } from '../types'
 
 export const isOverdue = (deadline: string, status?: string): boolean => {
   if (status === '已完成') return false
+  if (!deadline) return false
   return dayjs(deadline).isBefore(dayjs(), 'day')
+}
+
+export const isWorkOrderOverdue = (order: WorkOrder): boolean => {
+  if (order.status === '已完成') return false
+  
+  if (order.status === '待复查' && order.reviewDeadline) {
+    return isOverdue(order.reviewDeadline, order.status)
+  }
+  
+  return isOverdue(order.deadline, order.status)
 }
 
 export const getWorkOrderDisplayStatus = (order: WorkOrder): {
@@ -11,19 +22,19 @@ export const getWorkOrderDisplayStatus = (order: WorkOrder): {
   color: string
   isOverdue: boolean
 } => {
-  const overdue = isOverdue(order.deadline, order.status)
-  const reviewOverdue = order.reviewDeadline && isOverdue(order.reviewDeadline, order.status)
+  const isReviewOverdue = order.status === '待复查' && order.reviewDeadline && isOverdue(order.reviewDeadline, order.status)
+  const isDisposalOverdue = order.status !== '待复查' && isOverdue(order.deadline, order.status)
   
   if (order.status === '已完成') {
     return { text: '已完成', color: 'success', isOverdue: false }
   }
   
-  if (overdue) {
-    return { text: '已超期', color: 'error', isOverdue: true }
+  if (isReviewOverdue) {
+    return { text: '复查超期', color: 'error', isOverdue: true }
   }
   
-  if (reviewOverdue && order.status === '待复查') {
-    return { text: '复查超期', color: 'error', isOverdue: true }
+  if (isDisposalOverdue) {
+    return { text: '已超期', color: 'error', isOverdue: true }
   }
   
   const statusMap: Record<string, { text: string; color: string }> = {
@@ -36,7 +47,7 @@ export const getWorkOrderDisplayStatus = (order: WorkOrder): {
 }
 
 export const getOverdueCount = (orders: WorkOrder[]): number => {
-  return orders.filter(o => isOverdue(o.deadline, o.status)).length
+  return orders.filter(o => isWorkOrderOverdue(o)).length
 }
 
 export const getPendingReviewCount = (orders: WorkOrder[]): number => {

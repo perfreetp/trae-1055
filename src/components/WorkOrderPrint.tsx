@@ -1,69 +1,25 @@
 import React, { useEffect } from 'react'
 import { WorkOrder, WoodRecord } from '../types'
-import { Table, Image } from 'antd'
-import type { ColumnsType } from 'antd/es/table'
 
 interface WorkOrderPrintProps {
   order: WorkOrder
   woodRecords: WoodRecord[]
+  totalPesticideArea?: number
+  totalPesticideQuantity?: number
 }
 
-const WorkOrderPrint: React.FC<WorkOrderPrintProps> = ({ order, woodRecords }) => {
+const WorkOrderPrint: React.FC<WorkOrderPrintProps> = ({ 
+  order, 
+  woodRecords, 
+  totalPesticideArea = 0, 
+  totalPesticideQuantity = 0 
+}) => {
   useEffect(() => {
     const timer = setTimeout(() => {
       window.print()
-    }, 300)
+    }, 500)
     return () => clearTimeout(timer)
   }, [])
-
-  const woodColumns: ColumnsType<WoodRecord> = [
-    {
-      title: '序号',
-      dataIndex: 'no',
-      key: 'no',
-      width: 60,
-      align: 'center'
-    },
-    {
-      title: '位置',
-      dataIndex: 'location',
-      key: 'location'
-    },
-    {
-      title: '树种',
-      dataIndex: 'treeSpecies',
-      key: 'treeSpecies',
-      width: 100
-    },
-    {
-      title: '胸径(cm)',
-      dataIndex: 'diameter',
-      key: 'diameter',
-      width: 90,
-      align: 'center'
-    },
-    {
-      title: '树高(m)',
-      dataIndex: 'height',
-      key: 'height',
-      width: 80,
-      align: 'center'
-    },
-    {
-      title: '处理方式',
-      dataIndex: 'disposalMethod',
-      key: 'disposalMethod',
-      width: 100,
-      align: 'center'
-    },
-    {
-      title: '处理结果',
-      dataIndex: 'result',
-      key: 'result',
-      width: 100,
-      align: 'center'
-    }
-  ]
 
   return (
     <div style={{
@@ -76,7 +32,8 @@ const WorkOrderPrint: React.FC<WorkOrderPrintProps> = ({ order, woodRecords }) =
       background: 'white',
       fontFamily: 'SimSun, serif',
       fontSize: '12pt',
-      color: 'black'
+      color: 'black',
+      zIndex: 9999
     }}>
       <style>
         {`
@@ -97,12 +54,21 @@ const WorkOrderPrint: React.FC<WorkOrderPrintProps> = ({ order, woodRecords }) =
               top: 0;
               width: 100%;
             }
-            .ant-table {
+            .print-section table {
               border: 1px solid #000 !important;
+              border-collapse: collapse !important;
+              width: 100% !important;
+              margin-bottom: 10px !important;
             }
-            .ant-table th, .ant-table td {
+            .print-section th, .print-section td {
               border: 1px solid #000 !important;
               padding: 4px 8px !important;
+              font-size: 11pt !important;
+            }
+            .print-section th {
+              background: #f5f5f5 !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
             }
             .no-print {
               display: none !important;
@@ -115,7 +81,7 @@ const WorkOrderPrint: React.FC<WorkOrderPrintProps> = ({ order, woodRecords }) =
           <h1 style={{ fontSize: '20pt', margin: 0, fontWeight: 'bold' }}>林业病虫害现场处置单</h1>
         </div>
 
-        <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 20 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 15 }}>
           <tbody>
             <tr>
               <td style={{ border: '1px solid #000', padding: '8px 12px', width: '15%', background: '#f5f5f5' }}>工单编号</td>
@@ -145,9 +111,9 @@ const WorkOrderPrint: React.FC<WorkOrderPrintProps> = ({ order, woodRecords }) =
             </tr>
             <tr>
               <td style={{ border: '1px solid #000', padding: '8px 12px', background: '#f5f5f5' }}>责任人</td>
-              <td style={{ border: '1px solid #000', padding: '8px 12px' }}>{order.assignee}</td>
+              <td style={{ border: '1px solid #000', padding: '8px 12px' }}>{order.assignee || '-'}</td>
               <td style={{ border: '1px solid #000', padding: '8px 12px', background: '#f5f5f5' }}>防治队伍</td>
-              <td style={{ border: '1px solid #000', padding: '8px 12px' }}>{order.team}</td>
+              <td style={{ border: '1px solid #000', padding: '8px 12px' }}>{order.team || '-'}</td>
             </tr>
             <tr>
               <td style={{ border: '1px solid #000', padding: '8px 12px', background: '#f5f5f5' }}>处置日期</td>
@@ -155,6 +121,14 @@ const WorkOrderPrint: React.FC<WorkOrderPrintProps> = ({ order, woodRecords }) =
               <td style={{ border: '1px solid #000', padding: '8px 12px', background: '#f5f5f5' }}>复查日期</td>
               <td style={{ border: '1px solid #000', padding: '8px 12px' }}>{order.reviewDate || order.reviewDeadline || '-'}</td>
             </tr>
+            {(totalPesticideArea > 0 || totalPesticideQuantity > 0) && (
+              <tr>
+                <td style={{ border: '1px solid #000', padding: '8px 12px', background: '#f5f5f5' }}>累计用药面积</td>
+                <td style={{ border: '1px solid #000', padding: '8px 12px' }}>{totalPesticideArea} 亩</td>
+                <td style={{ border: '1px solid #000', padding: '8px 12px', background: '#f5f5f5' }}>累计用药量</td>
+                <td style={{ border: '1px solid #000', padding: '8px 12px' }}>{totalPesticideQuantity} 单位</td>
+              </tr>
+            )}
             {order.disposalResult && (
               <tr>
                 <td style={{ border: '1px solid #000', padding: '8px 12px', background: '#f5f5f5' }}>处置结果</td>
@@ -171,31 +145,36 @@ const WorkOrderPrint: React.FC<WorkOrderPrintProps> = ({ order, woodRecords }) =
         </table>
 
         {woodRecords.length > 0 && (
-          <div style={{ marginBottom: 20 }}>
+          <div style={{ marginBottom: 15 }}>
             <h3 style={{ fontSize: '14pt', margin: '0 0 10px 0', fontWeight: 'bold' }}>
               疫木清理清单（共 {woodRecords.length} 株）
             </h3>
-            <Table
-              dataSource={woodRecords}
-              columns={woodColumns}
-              rowKey="id"
-              pagination={false}
-              size="small"
-              bordered
-            />
-          </div>
-        )}
-
-        {order.disposalPhotos.length > 0 && (
-          <div style={{ marginBottom: 20 }}>
-            <h3 style={{ fontSize: '14pt', margin: '0 0 10px 0', fontWeight: 'bold' }}>现场照片</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-              {order.disposalPhotos.slice(0, 6).map((photo, index) => (
-                <div key={index} style={{ border: '1px solid #000' }}>
-                  <Image src={photo} alt={`现场照片${index + 1}`} width="100%" />
-                </div>
-              ))}
-            </div>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={{ border: '1px solid #000', padding: '6px 8px', width: '60px', textAlign: 'center', background: '#f5f5f5' }}>序号</th>
+                  <th style={{ border: '1px solid #000', padding: '6px 8px', background: '#f5f5f5' }}>位置</th>
+                  <th style={{ border: '1px solid #000', padding: '6px 8px', width: '100px', background: '#f5f5f5' }}>树种</th>
+                  <th style={{ border: '1px solid #000', padding: '6px 8px', width: '80px', textAlign: 'center', background: '#f5f5f5' }}>胸径(cm)</th>
+                  <th style={{ border: '1px solid #000', padding: '6px 8px', width: '80px', textAlign: 'center', background: '#f5f5f5' }}>树高(m)</th>
+                  <th style={{ border: '1px solid #000', padding: '6px 8px', width: '90px', textAlign: 'center', background: '#f5f5f5' }}>处理方式</th>
+                  <th style={{ border: '1px solid #000', padding: '6px 8px', width: '90px', textAlign: 'center', background: '#f5f5f5' }}>处理结果</th>
+                </tr>
+              </thead>
+              <tbody>
+                {woodRecords.map(record => (
+                  <tr key={record.id}>
+                    <td style={{ border: '1px solid #000', padding: '4px 8px', textAlign: 'center' }}>{record.no}</td>
+                    <td style={{ border: '1px solid #000', padding: '4px 8px' }}>{record.location}</td>
+                    <td style={{ border: '1px solid #000', padding: '4px 8px' }}>{record.treeSpecies}</td>
+                    <td style={{ border: '1px solid #000', padding: '4px 8px', textAlign: 'center' }}>{record.diameter}</td>
+                    <td style={{ border: '1px solid #000', padding: '4px 8px', textAlign: 'center' }}>{record.height || '-'}</td>
+                    <td style={{ border: '1px solid #000', padding: '4px 8px', textAlign: 'center' }}>{record.disposalMethod}</td>
+                    <td style={{ border: '1px solid #000', padding: '4px 8px', textAlign: 'center' }}>{record.result}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
 

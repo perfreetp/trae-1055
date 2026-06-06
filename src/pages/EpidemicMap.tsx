@@ -34,7 +34,7 @@ import dayjs from 'dayjs'
 import { v4 as uuidv4 } from 'uuid'
 import { useApp } from '../store/AppContext'
 import { MonitoringPoint, HazardLevel, WorkOrder, WorkOrderStatus, DisposalMethod } from '../types'
-import { isOverdue, getWorkOrderDisplayStatus, generateCode } from '../utils'
+import { isOverdue, getWorkOrderDisplayStatus, generateCode, isWorkOrderOverdue } from '../utils'
 
 const { Option } = Select
 const { TextArea } = Input
@@ -63,31 +63,37 @@ const EpidemicMap: React.FC = () => {
   const abnormalPoints = monitoringPoints.filter(p => p.status === '异常').length
   const severePoints = monitoringPoints.filter(p => p.hazardLevel === '重度' || p.hazardLevel === '极重度').length
 
-  const filteredPoints = useMemo(() => {
-    return monitoringPoints.filter(p => {
-      if (filters.pestType !== 'all' && p.pestType !== filters.pestType) return false
-      if (filters.hazardLevel !== 'all' && p.hazardLevel !== filters.hazardLevel) return false
-      return true
-    })
-  }, [monitoringPoints, filters])
-
   const filteredWorkOrders = useMemo(() => {
     return workOrders.filter(w => {
-      const point = monitoringPoints.find(p => p.id === w.monitoringPointId)
       if (filters.pestType !== 'all' && w.pestType !== filters.pestType) return false
       if (filters.hazardLevel !== 'all' && w.hazardLevel !== filters.hazardLevel) return false
-      if (filters.isOverdue && !isOverdue(w.deadline, w.status)) return false
+      if (filters.isOverdue && !isWorkOrderOverdue(w)) return false
       if (filters.isDisposed === 'disposed' && w.status !== '已完成') return false
       if (filters.isDisposed === 'notDisposed' && w.status === '已完成') return false
       return true
     })
-  }, [workOrders, monitoringPoints, filters])
+  }, [workOrders, filters])
+
+  const filteredPoints = useMemo(() => {
+    const filteredPointIds = new Set(filteredWorkOrders.map(w => w.monitoringPointId))
+    
+    return monitoringPoints.filter(p => {
+      if (filters.pestType !== 'all' && p.pestType !== filters.pestType) return false
+      if (filters.hazardLevel !== 'all' && p.hazardLevel !== filters.hazardLevel) return false
+      
+      if (filters.isOverdue || filters.isDisposed !== 'all') {
+        return filteredPointIds.has(p.id)
+      }
+      
+      return true
+    })
+  }, [monitoringPoints, filteredWorkOrders, filters])
 
   const stats = useMemo(() => {
     const orders = filteredWorkOrders
-    const overdueCount = orders.filter(w => isOverdue(w.deadline, w.status)).length
+    const overdueCount = orders.filter(w => isWorkOrderOverdue(w)).length
     const completedCount = orders.filter(w => w.status === '已完成').length
-    const pendingCount = orders.filter(w => w.status === '待处理' || w.status === '处理中').length
+    const pendingCount = orders.filter(w => w.status === '待处理' || w.status === '处理中' || w.status === '待复查').length
     const totalArea = orders.filter(w => w.status === '已完成').reduce((sum, w) => sum + w.area, 0)
     return { overdueCount, completedCount, pendingCount, totalArea, total: orders.length }
   }, [filteredWorkOrders])
@@ -264,8 +270,8 @@ const EpidemicMap: React.FC = () => {
               {filteredPoints.map(point => {
                 const pos = getPointPosition(point.lng, point.lat)
                 const colorClass = getPointColor(point.status, point.hazardLevel)
-                const pointOrders = workOrders.filter(w => w.monitoringPointId === point.id)
-                const hasOverdue = pointOrders.some(w => isOverdue(w.deadline, w.status))
+                const pointOrders = filteredWorkOrders.filter(w => w.monitoringPointId === point.id)
+                const hasOverdue = pointOrders.some(w => isWorkOrderOverdue(w))
                 return (
                   <Tooltip key={point.id} title={
                     <div>
@@ -366,18 +372,19 @@ const EpidemicMap: React.FC = () => {
               dataSource={filteredWorkOrders.slice(0, 5)}
               renderItem={item => {
                 const displayStatus = getWorkOrderDisplayStatus(item)
-                const isOverdueFlag = isOverdue(item.deadline, item.status)
+                const isOverdueFlag = isWorkOrderOverdue(item)
+                const showDate = item.status === '待复查' && item.reviewDeadline ? item.reviewDeadline : item.deadline
                 return (
                   <List.Item>
                     <List.Item.Meta
                       avatar={
-                        <Avatar icon={<BugOutlined />} style={{ backgroundColor: isOverdueFlag ? '#ff4d4f' : '#faad14' }} />
+                        <Avatar icon={<BugOutlined />} style={{ backgroundColor: isOverdueFlag ? '#ff4d4f' : displayStatus.text === '已完成' ? '#52c41a' : '#faad14' }} />
                       }
                       title={
                         <span>
                           {item.code}
                           <Tag 
-                            color={isOverdueFlag ? 'red' : displayStatus.text === '已完成' ? 'green' : 'blue'} 
+                            color={displayStatus.color}
                             style={{ marginLeft: 8 }}
                           >
                             {displayStatus.text}
@@ -388,7 +395,7 @@ const EpidemicMap: React.FC = () => {
                         <div>
                           <div>{item.monitoringPointName}</div>
                           <div style={{ color: '#999', fontSize: 12 }}>
-                            截止：{item.deadline} · {item.team}
+                            截止：{showDate} · {item.team}
                           </div>
                         </div>
                       }

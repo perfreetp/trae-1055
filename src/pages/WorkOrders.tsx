@@ -21,7 +21,8 @@ import {
   Statistic,
   Alert,
   Image,
-  Pagination
+  Pagination,
+  Divider
 } from 'antd'
 import {
   PlusOutlined,
@@ -40,8 +41,7 @@ import dayjs from 'dayjs'
 import { v4 as uuidv4 } from 'uuid'
 import { useApp } from '../store/AppContext'
 import { WorkOrder, WoodRecord, WorkOrderStatus, DisposalMethod } from '../types'
-import { isOverdue, getWorkOrderDisplayStatus, handleFileUpload, generateCode } from '../utils'
-import WorkOrderPrint from '../components/WorkOrderPrint'
+import { isOverdue, getWorkOrderDisplayStatus, handleFileUpload, generateCode, isWorkOrderOverdue } from '../utils'
 
 const { Option } = Select
 const { TextArea } = Input
@@ -53,14 +53,14 @@ const WorkOrders: React.FC = () => {
     setWorkOrders,
     monitoringPoints,
     publicReports,
-    setPublicReports
+    setPublicReports,
+    pesticideUsages
   } = useApp()
 
   const [modalVisible, setModalVisible] = useState(false)
   const [detailVisible, setDetailVisible] = useState(false)
   const [resultVisible, setResultVisible] = useState(false)
   const [reviewVisible, setReviewVisible] = useState(false)
-  const [printVisible, setPrintVisible] = useState(false)
   const [editingOrder, setEditingOrder] = useState<WorkOrder | null>(null)
   const [viewingOrder, setViewingOrder] = useState<WorkOrder | null>(null)
   const [activeTab, setActiveTab] = useState('all')
@@ -73,7 +73,7 @@ const WorkOrders: React.FC = () => {
   const WOOD_PAGE_SIZE = 10
 
   const overdueCount = useMemo(() => 
-    workOrders.filter(w => isOverdue(w.deadline, w.status)).length,
+    workOrders.filter(w => isWorkOrderOverdue(w)).length,
     [workOrders]
   )
   
@@ -102,7 +102,7 @@ const WorkOrders: React.FC = () => {
       case 'all':
         return workOrders
       case 'overdue':
-        return workOrders.filter(w => isOverdue(w.deadline, w.status))
+        return workOrders.filter(w => isWorkOrderOverdue(w))
       case 'pendingReview':
         return workOrders.filter(w => w.status === '待复查')
       default:
@@ -110,13 +110,13 @@ const WorkOrders: React.FC = () => {
     }
   }
 
-  const generateWoodRecords = (order: WorkOrder): WoodRecord[] => {
-    if (order.woodRecords && order.woodRecords.length > 0) {
-      return order.woodRecords
-    }
+  const generateWoodRecords = (order: WorkOrder, count?: number): WoodRecord[] => {
+    const woodCount = count ?? order.woodCount
+    if (woodCount <= 0) return []
+    
     const species = ['马尾松', '黑松', '湿地松', '火炬松', '黄山松']
     const records: WoodRecord[] = []
-    for (let i = 1; i <= order.woodCount; i++) {
+    for (let i = 1; i <= woodCount; i++) {
       records.push({
         id: uuidv4(),
         workOrderId: order.id,
@@ -217,11 +217,12 @@ const WorkOrders: React.FC = () => {
       key: 'deadline',
       width: 120,
       render: (date: string, record) => {
-        const overdue = isOverdue(date, record.status)
+        const display = getWorkOrderDisplayStatus(record)
+        const showDate = record.status === '待复查' && record.reviewDeadline ? record.reviewDeadline : date
         return (
-          <span style={{ color: overdue ? '#ff4d4f' : 'inherit' }}>
-            {date}
-            {overdue && <Tag color="red" style={{ marginLeft: 4 }}>超期</Tag>}
+          <span style={{ color: display.isOverdue ? '#ff4d4f' : 'inherit' }}>
+            {showDate}
+            {display.isOverdue && <Tag color="red" style={{ marginLeft: 4 }}>{display.text}</Tag>}
           </span>
         )
       }
@@ -363,7 +364,8 @@ const WorkOrders: React.FC = () => {
   const handleResultSubmit = () => {
     resultForm.validateFields().then(values => {
       if (viewingOrder) {
-        const woodRecords = generateWoodRecords(viewingOrder)
+        const actualWoodCount = values.woodCount || viewingOrder.woodCount
+        const woodRecords = generateWoodRecords(viewingOrder, actualWoodCount)
         setWorkOrders(prev =>
           prev.map(w =>
             w.id === viewingOrder.id
@@ -373,7 +375,7 @@ const WorkOrders: React.FC = () => {
                   disposalResult: values.disposalResult,
                   disposalDate: values.disposalDate.format('YYYY-MM-DD'),
                   disposalMethod: values.disposalMethod,
-                  woodCount: values.woodCount || w.woodCount,
+                  woodCount: actualWoodCount,
                   woodRecords: woodRecords,
                   reviewDeadline: values.reviewDeadline.format('YYYY-MM-DD'),
                   disposalPhotos: disposalPhotos
@@ -411,8 +413,175 @@ const WorkOrders: React.FC = () => {
   }
 
   const handlePrint = (record: WorkOrder) => {
+    const woodRecords = generateWoodRecords(record)
+    const usages = pesticideUsages.filter(u => u.workOrderId === record.id)
+    const totalPesticideArea = usages.reduce((sum, u) => sum + u.area, 0)
+    const totalPesticideQuantity = usages.reduce((sum, u) => sum + u.quantity, 0)
+    
     setViewingOrder(record)
-    setPrintVisible(true)
+    
+    const printKey = Date.now()
+    const printWindow = window.open('', `print_${record.id}_${printKey}`)
+    if (printWindow) {
+      const woodRowsHtml = woodRecords.map(r => `
+        <tr>
+          <td style="border:1px solid #000;padding:4px 8px;text-align:center;">${r.no}</td>
+          <td style="border:1px solid #000;padding:4px 8px;">${r.location}</td>
+          <td style="border:1px solid #000;padding:4px 8px;">${r.treeSpecies}</td>
+          <td style="border:1px solid #000;padding:4px 8px;text-align:center;">${r.diameter}</td>
+          <td style="border:1px solid #000;padding:4px 8px;text-align:center;">${r.height || '-'}</td>
+          <td style="border:1px solid #000;padding:4px 8px;text-align:center;">${r.disposalMethod}</td>
+          <td style="border:1px solid #000;padding:4px 8px;text-align:center;">${r.result}</td>
+        </tr>
+      `).join('')
+      
+      const photosHtml = (record.disposalPhotos || []).slice(0, 6).map((photo, i) => `
+        <div style="border:1px solid #000;display:inline-block;margin:4px;">
+          <img src="${photo}" alt="现场照片${i + 1}" style="width:150px;height:100px;object-fit:cover;" />
+        </div>
+      `).join('')
+
+      const pesticideHtml = (totalPesticideArea > 0 || totalPesticideQuantity > 0) ? `
+        <tr>
+          <td style="border:1px solid #000;padding:8px 12px;width:15%;background:#f5f5f5;">累计用药面积</td>
+          <td style="border:1px solid #000;padding:8px 12px;">${totalPesticideArea} 亩</td>
+          <td style="border:1px solid #000;padding:8px 12px;width:15%;background:#f5f5f5;">累计用药量</td>
+          <td style="border:1px solid #000;padding:8px 12px;">${totalPesticideQuantity} 单位</td>
+        </tr>
+      ` : ''
+
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>现场处置单_${record.code}</title>
+          <style>
+            @page { size: A4 portrait; margin: 20mm; }
+            body { font-family: SimSun, serif; font-size: 12pt; color: #000; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+            th, td { border: 1px solid #000; padding: 6px 8px; font-size: 11pt; }
+            th { background: #f5f5f5; }
+            h1 { text-align: center; font-size: 20pt; margin: 0 0 20px 0; font-weight: bold; }
+            h3 { font-size: 14pt; margin: 0 0 10px 0; font-weight: bold; }
+            .signature { margin-top: 40px; display: flex; justify-content: space-between; }
+            .signature-item { text-align: center; }
+            .signature-line { border-bottom: 1px solid #000; padding: 0 60px 2px 0; margin-bottom: 40px; display: inline-block; }
+          </style>
+        </head>
+        <body>
+          <h1>林业病虫害现场处置单</h1>
+          <table>
+            <tbody>
+              <tr>
+                <td style="border:1px solid #000;padding:8px 12px;width:15%;background:#f5f5f5;">工单编号</td>
+                <td style="border:1px solid #000;padding:8px 12px;width:35%;">${record.code}</td>
+                <td style="border:1px solid #000;padding:8px 12px;width:15%;background:#f5f5f5;">创建日期</td>
+                <td style="border:1px solid #000;padding:8px 12px;width:35%;">${record.createDate}</td>
+              </tr>
+              <tr>
+                <td style="border:1px solid #000;padding:8px 12px;background:#f5f5f5;">监测点</td>
+                <td style="border:1px solid #000;padding:8px 12px;" colspan="3">${record.monitoringPointName}</td>
+              </tr>
+              <tr>
+                <td style="border:1px solid #000;padding:8px 12px;background:#f5f5f5;">具体位置</td>
+                <td style="border:1px solid #000;padding:8px 12px;" colspan="3">${record.location}</td>
+              </tr>
+              <tr>
+                <td style="border:1px solid #000;padding:8px 12px;background:#f5f5f5;">病虫害类型</td>
+                <td style="border:1px solid #000;padding:8px 12px;">${record.pestType}</td>
+                <td style="border:1px solid #000;padding:8px 12px;background:#f5f5f5;">危害等级</td>
+                <td style="border:1px solid #000;padding:8px 12px;">${record.hazardLevel}</td>
+              </tr>
+              <tr>
+                <td style="border:1px solid #000;padding:8px 12px;background:#f5f5f5;">处置方式</td>
+                <td style="border:1px solid #000;padding:8px 12px;">${record.disposalMethod}</td>
+                <td style="border:1px solid #000;padding:8px 12px;background:#f5f5f5;">防治面积</td>
+                <td style="border:1px solid #000;padding:8px 12px;">${record.area} 亩</td>
+              </tr>
+              <tr>
+                <td style="border:1px solid #000;padding:8px 12px;background:#f5f5f5;">责任人</td>
+                <td style="border:1px solid #000;padding:8px 12px;">${record.assignee || '-'}</td>
+                <td style="border:1px solid #000;padding:8px 12px;background:#f5f5f5;">防治队伍</td>
+                <td style="border:1px solid #000;padding:8px 12px;">${record.team || '-'}</td>
+              </tr>
+              <tr>
+                <td style="border:1px solid #000;padding:8px 12px;background:#f5f5f5;">处置日期</td>
+                <td style="border:1px solid #000;padding:8px 12px;">${record.disposalDate || '-'}</td>
+                <td style="border:1px solid #000;padding:8px 12px;background:#f5f5f5;">复查日期</td>
+                <td style="border:1px solid #000;padding:8px 12px;">${record.reviewDate || record.reviewDeadline || '-'}</td>
+              </tr>
+              ${pesticideHtml}
+              ${record.disposalResult ? `
+                <tr>
+                  <td style="border:1px solid #000;padding:8px 12px;background:#f5f5f5;">处置结果</td>
+                  <td style="border:1px solid #000;padding:8px 12px;" colspan="3">${record.disposalResult}</td>
+                </tr>
+              ` : ''}
+              ${record.reviewResult ? `
+                <tr>
+                  <td style="border:1px solid #000;padding:8px 12px;background:#f5f5f5;">复查结论</td>
+                  <td style="border:1px solid #000;padding:8px 12px;" colspan="3">${record.reviewResult}</td>
+                </tr>
+              ` : ''}
+            </tbody>
+          </table>
+          
+          ${woodRecords.length > 0 ? `
+            <div style="margin-bottom:15px;">
+              <h3>疫木清理清单（共 ${woodRecords.length} 株）</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width:60px;text-align:center;">序号</th>
+                    <th>位置</th>
+                    <th style="width:100px;">树种</th>
+                    <th style="width:80px;text-align:center;">胸径(cm)</th>
+                    <th style="width:80px;text-align:center;">树高(m)</th>
+                    <th style="width:90px;text-align:center;">处理方式</th>
+                    <th style="width:90px;text-align:center;">处理结果</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${woodRowsHtml}
+                </tbody>
+              </table>
+            </div>
+          ` : ''}
+          
+          ${(record.disposalPhotos || []).length > 0 ? `
+            <div style="margin-bottom:20px;">
+              <h3>现场照片</h3>
+              ${photosHtml}
+            </div>
+          ` : ''}
+          
+          <div class="signature">
+            <div class="signature-item">
+              <span class="signature-line"></span>
+              <div style="font-size:10pt;">处置人签字：</div>
+            </div>
+            <div class="signature-item">
+              <span class="signature-line"></span>
+              <div style="font-size:10pt;">复查人签字：</div>
+            </div>
+            <div class="signature-item">
+              <span class="signature-line"></span>
+              <div style="font-size:10pt;">林业站负责人：</div>
+            </div>
+            <div class="signature-item">
+              <span class="signature-line" style="padding-right:80px;"></span>
+              <div style="font-size:10pt;">日期：</div>
+            </div>
+          </div>
+        </body>
+        </html>
+      `)
+      printWindow.document.close()
+      printWindow.focus()
+      setTimeout(() => {
+        printWindow.print()
+      }, 300)
+    }
   }
 
   const customDisposalUploadProps = {
@@ -950,6 +1119,38 @@ const WorkOrders: React.FC = () => {
               )}
             </Descriptions>
 
+            {(() => {
+              const usages = pesticideUsages.filter(u => u.workOrderId === viewingOrder.id)
+              const totalArea = usages.reduce((sum, u) => sum + u.area, 0)
+              const totalQuantity = usages.reduce((sum, u) => sum + u.quantity, 0)
+              if (usages.length > 0) {
+                return (
+                  <>
+                    <Divider orientation="left">用药记录</Divider>
+                    <Descriptions bordered column={2} size="small">
+                      <Descriptions.Item label="累计用药面积">{totalArea} 亩</Descriptions.Item>
+                      <Descriptions.Item label="累计用药量">{totalQuantity} 单位</Descriptions.Item>
+                    </Descriptions>
+                    <Table
+                      dataSource={usages}
+                      columns={[
+                        { title: '日期', dataIndex: 'usageDate', key: 'date', width: 120 },
+                        { title: '药剂名称', dataIndex: 'pesticideName', key: 'name' },
+                        { title: '用量', dataIndex: 'quantity', key: 'qty', width: 100, render: (v, r) => `${v} ${r.unit}` },
+                        { title: '面积(亩)', dataIndex: 'area', key: 'area', width: 100 },
+                        { title: '操作人员', dataIndex: 'operator', key: 'op', width: 100 }
+                      ]}
+                      rowKey="id"
+                      size="small"
+                      pagination={false}
+                      style={{ marginTop: 8 }}
+                    />
+                  </>
+                )
+              }
+              return null
+            })()}
+
             {viewingOrder.woodCount > 0 && (
               <div style={{ marginTop: 16 }}>
                 <h4 style={{ marginBottom: 8 }}>
@@ -1010,13 +1211,6 @@ const WorkOrders: React.FC = () => {
           </div>
         )}
       </Modal>
-
-      {printVisible && viewingOrder && (
-        <WorkOrderPrint
-          order={viewingOrder}
-          woodRecords={generateWoodRecords(viewingOrder)}
-        />
-      )}
     </div>
   )
 }

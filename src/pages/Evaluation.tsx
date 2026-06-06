@@ -70,6 +70,8 @@ const Evaluation: React.FC = () => {
   const [reportPhotos, setReportPhotos] = useState<string[]>([])
   const [selectedMonth, setSelectedMonth] = useState<number>(dayjs().month() + 1)
   const [selectedYear, setSelectedYear] = useState<number>(dayjs().year())
+  const [reportFilterYear, setReportFilterYear] = useState<number | null>(null)
+  const [reportFilterMonth, setReportFilterMonth] = useState<number | null>(null)
   const printRef = useRef<HTMLDivElement>(null)
 
   const totalCases = historicalCases.length
@@ -932,24 +934,63 @@ ${selectedYear}年${selectedMonth}月
             <Card
               extra={
                 <Space>
+                  <Select
+                    placeholder="选择年份"
+                    style={{ width: 120 }}
+                    allowClear
+                    value={reportFilterYear}
+                    onChange={(v) => setReportFilterYear(v)}
+                  >
+                    {[2024, 2025, 2026, 2027].map(y => (
+                      <Option key={y} value={y}>{y}年</Option>
+                    ))}
+                  </Select>
+                  <Select
+                    placeholder="选择月份"
+                    style={{ width: 100 }}
+                    allowClear
+                    value={reportFilterMonth}
+                    onChange={(v) => setReportFilterMonth(v)}
+                  >
+                    {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                      <Option key={m} value={m}>{m}月</Option>
+                    ))}
+                  </Select>
                   <Button type="primary" icon={<PlusOutlined />} onClick={handleGenerateMonthlyReport}>
                     生成月报
                   </Button>
                 </Space>
               }
             >
-              {monthlyReports.length > 0 ? (
-                <Table
-                  columns={monthlyReportColumns}
-                  dataSource={monthlyReports.sort((a, b) => 
-                    b.year * 12 + b.month - (a.year * 12 + a.month)
-                  )}
-                  rowKey="id"
-                  pagination={{ pageSize: 10 }}
-                />
-              ) : (
-                <Empty description="暂无月报数据，请点击上方按钮生成月报" />
-              )}
+              {(() => {
+                let filteredReports = [...monthlyReports]
+                if (reportFilterYear !== null) {
+                  filteredReports = filteredReports.filter(r => r.year === reportFilterYear)
+                }
+                if (reportFilterMonth !== null) {
+                  filteredReports = filteredReports.filter(r => r.month === reportFilterMonth)
+                }
+                filteredReports.sort((a, b) => b.year * 12 + b.month - (a.year * 12 + a.month))
+                
+                const hasFilter = reportFilterYear !== null || reportFilterMonth !== null
+                
+                return filteredReports.length > 0 ? (
+                  <Table
+                    columns={monthlyReportColumns}
+                    dataSource={filteredReports}
+                    rowKey="id"
+                    pagination={{ pageSize: 10 }}
+                  />
+                ) : (
+                  <Empty 
+                    description={
+                      hasFilter 
+                        ? `暂无${reportFilterYear || ''}年${reportFilterMonth || ''}月的月报数据`
+                        : '暂无月报数据，请点击上方按钮生成月报'
+                    } 
+                  />
+                )
+              })()}
             </Card>
           </TabPane>
 
