@@ -100,9 +100,9 @@ const Evaluation: React.FC = () => {
     const disposalArea = workOrders
       .filter(w => w.status === '已完成' && w.reviewDate && isInMonth(w.reviewDate))
       .reduce((sum, w) => sum + w.area, 0)
-    const pesticideUsage = pesticideUsages
-      .filter(u => isInMonth(u.usageDate))
-      .reduce((sum, u) => sum + u.quantity, 0)
+    const monthPesticideUsages = pesticideUsages.filter(u => isInMonth(u.usageDate))
+    const pesticideQuantity = monthPesticideUsages.reduce((sum, u) => sum + u.quantity, 0)
+    const pesticideArea = monthPesticideUsages.reduce((sum, u) => sum + u.area, 0)
 
     const currentRecord = evaluationRecords.find(r => r.year === selectedYear && r.month === selectedMonth)
     const lastYearRecord = evaluationRecords.find(r => r.year === selectedYear - 1 && r.month === selectedMonth)
@@ -119,7 +119,8 @@ const Evaluation: React.FC = () => {
       completedOrders,
       totalWood,
       disposalArea,
-      pesticideUsage,
+      pesticideQuantity,
+      pesticideArea,
       avgDensity,
       lastYearAvgDensity,
       densityChange,
@@ -417,6 +418,12 @@ const Evaluation: React.FC = () => {
       width: 120
     },
     {
+      title: '用药面积(亩)',
+      dataIndex: 'pesticideArea',
+      key: 'pesticideArea',
+      width: 120
+    },
+    {
       title: '药剂使用',
       dataIndex: 'pesticideUsage',
       key: 'pesticideUsage',
@@ -537,7 +544,8 @@ const Evaluation: React.FC = () => {
       completedOrders: monthlyStats.completedOrders,
       woodCount: monthlyStats.totalWood,
       disposalArea: monthlyStats.disposalArea,
-      pesticideUsage: monthlyStats.pesticideUsage,
+      pesticideUsage: monthlyStats.pesticideQuantity,
+      pesticideArea: monthlyStats.pesticideArea,
       avgDensity: monthlyStats.avgDensity,
       lastYearAvgDensity: monthlyStats.lastYearAvgDensity,
       newMonitoringPoints: 0,
@@ -572,7 +580,8 @@ ${selectedYear}年${selectedMonth}月
 三、处置情况
 - 清理疫木数量：${stats.totalWood} 株
 - 累计处置面积：${stats.disposalArea} 亩
-- 药剂使用量：${stats.pesticideUsage} 单位
+- 累计用药面积：${stats.pesticideArea} 亩
+- 药剂使用量：${stats.pesticideQuantity} 单位
 
 四、虫情分析
 - 本月平均虫口密度：${stats.avgDensity}
@@ -657,6 +666,10 @@ ${selectedYear}年${selectedMonth}月
             <tr>
               <td style="padding: 8px; border: 1px solid #ddd; background: #f5f5f5;">累计处置面积</td>
               <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">${record.disposalArea} 亩</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border: 1px solid #ddd; background: #f5f5f5;">累计用药面积</td>
+              <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">${record.pesticideArea || 0} 亩</td>
             </tr>
             <tr>
               <td style="padding: 8px; border: 1px solid #ddd; background: #f5f5f5;">药剂使用量</td>
@@ -859,7 +872,8 @@ ${selectedYear}年${selectedMonth}月
                       { label: '完成工单', value: monthlyStats.completedOrders, unit: '单' },
                       { label: '清理疫木', value: monthlyStats.totalWood, unit: '株' },
                       { label: '处置面积', value: monthlyStats.disposalArea, unit: '亩' },
-                      { label: '药剂使用', value: monthlyStats.pesticideUsage, unit: '单位' },
+                      { label: '用药面积', value: monthlyStats.pesticideArea, unit: '亩' },
+                      { label: '药剂使用', value: monthlyStats.pesticideQuantity, unit: '单位' },
                     ]}
                     renderItem={item => (
                       <List.Item>
@@ -1184,6 +1198,7 @@ ${selectedYear}年${selectedMonth}月
               <Descriptions.Item label="完成工单">{viewingMonthlyReport.completedOrders} 单</Descriptions.Item>
               <Descriptions.Item label="清理疫木">{viewingMonthlyReport.woodCount} 株</Descriptions.Item>
               <Descriptions.Item label="处置面积">{viewingMonthlyReport.disposalArea} 亩</Descriptions.Item>
+              <Descriptions.Item label="用药面积">{viewingMonthlyReport.pesticideArea || 0} 亩</Descriptions.Item>
               <Descriptions.Item label="药剂使用">{viewingMonthlyReport.pesticideUsage} 单位</Descriptions.Item>
               <Descriptions.Item label="本月平均密度">{viewingMonthlyReport.avgDensity}</Descriptions.Item>
               <Descriptions.Item label="去年同期密度">{viewingMonthlyReport.lastYearAvgDensity}</Descriptions.Item>

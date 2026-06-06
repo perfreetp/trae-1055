@@ -174,6 +174,7 @@ export interface MonthlyReport {
   woodCount: number
   disposalArea: number
   pesticideUsage: number
+  pesticideArea?: number
   avgDensity: number
   lastYearAvgDensity: number
   newMonitoringPoints: number

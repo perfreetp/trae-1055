@@ -111,12 +111,20 @@ const WorkOrders: React.FC = () => {
   }
 
   const generateWoodRecords = (order: WorkOrder, count?: number): WoodRecord[] => {
-    const woodCount = count ?? order.woodCount
-    if (woodCount <= 0) return []
+    const targetCount = count ?? order.woodCount
+    if (targetCount <= 0) return []
+    
+    if (order.woodRecords && order.woodRecords.length === targetCount && targetCount > 0) {
+      return order.woodRecords
+    }
+    
+    if (order.woodRecords && order.woodRecords.length > 0 && count === undefined) {
+      return order.woodRecords
+    }
     
     const species = ['马尾松', '黑松', '湿地松', '火炬松', '黄山松']
     const records: WoodRecord[] = []
-    for (let i = 1; i <= woodCount; i++) {
+    for (let i = 1; i <= targetCount; i++) {
       records.push({
         id: uuidv4(),
         workOrderId: order.id,
@@ -1086,10 +1094,22 @@ const WorkOrders: React.FC = () => {
               <Descriptions.Item label="责任人">{viewingOrder.assignee}</Descriptions.Item>
               <Descriptions.Item label="防治队伍">{viewingOrder.team}</Descriptions.Item>
               <Descriptions.Item label="创建日期">{viewingOrder.createDate}</Descriptions.Item>
-              <Descriptions.Item label="截止日期">
-                {viewingOrder.deadline}
-                {isOverdue(viewingOrder.deadline, viewingOrder.status) && <Tag color="red" style={{ marginLeft: 8 }}>超期</Tag>}
-              </Descriptions.Item>
+              {viewingOrder.status === '待复查' ? (
+                <>
+                  <Descriptions.Item label="复查截止日期">
+                    <span style={{ color: isOverdue(viewingOrder.reviewDeadline, viewingOrder.status) ? '#ff4d4f' : 'inherit', fontWeight: 600 }}>
+                      {viewingOrder.reviewDeadline}
+                      {isOverdue(viewingOrder.reviewDeadline, viewingOrder.status) && <Tag color="red" style={{ marginLeft: 8 }}>复查超期</Tag>}
+                    </span>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="原处置截止">{viewingOrder.deadline}</Descriptions.Item>
+                </>
+              ) : (
+                <Descriptions.Item label="处置截止日期">
+                  {viewingOrder.deadline}
+                  {isOverdue(viewingOrder.deadline, viewingOrder.status) && viewingOrder.status !== '已完成' && <Tag color="red" style={{ marginLeft: 8 }}>超期</Tag>}
+                </Descriptions.Item>
+              )}
               <Descriptions.Item label="状态">
                 <Tag color={getWorkOrderDisplayStatus(viewingOrder).color}>
                   {getWorkOrderDisplayStatus(viewingOrder).text}
@@ -1151,33 +1171,37 @@ const WorkOrders: React.FC = () => {
               return null
             })()}
 
-            {viewingOrder.woodCount > 0 && (
-              <div style={{ marginTop: 16 }}>
-                <h4 style={{ marginBottom: 8 }}>
-                  疫木清理清单（共 {generateWoodRecords(viewingOrder).length} 株）
-                </h4>
-                <Table
-                  dataSource={generateWoodRecords(viewingOrder).slice(
-                    (woodPage - 1) * WOOD_PAGE_SIZE,
-                    woodPage * WOOD_PAGE_SIZE
-                  )}
-                  columns={woodColumns}
-                  size="small"
-                  pagination={false}
-                  rowKey="id"
-                  bordered
-                />
-                <div style={{ marginTop: 8, textAlign: 'right' }}>
-                  <Pagination
-                    current={woodPage}
-                    pageSize={WOOD_PAGE_SIZE}
-                    total={generateWoodRecords(viewingOrder).length}
-                    onChange={setWoodPage}
+            {(() => {
+              const woodRecords = generateWoodRecords(viewingOrder)
+              if (woodRecords.length === 0) return null
+              return (
+                <div style={{ marginTop: 16 }}>
+                  <h4 style={{ marginBottom: 8 }}>
+                    疫木清理清单（共 {woodRecords.length} 株）
+                  </h4>
+                  <Table
+                    dataSource={woodRecords.slice(
+                      (woodPage - 1) * WOOD_PAGE_SIZE,
+                      woodPage * WOOD_PAGE_SIZE
+                    )}
+                    columns={woodColumns}
                     size="small"
+                    pagination={false}
+                    rowKey="id"
+                    bordered
                   />
+                  <div style={{ marginTop: 8, textAlign: 'right' }}>
+                    <Pagination
+                      current={woodPage}
+                      pageSize={WOOD_PAGE_SIZE}
+                      total={woodRecords.length}
+                      onChange={setWoodPage}
+                      size="small"
+                    />
+                  </div>
                 </div>
-              </div>
-            )}
+              )
+            })()}
 
             {viewingOrder.disposalPhotos && viewingOrder.disposalPhotos.length > 0 && (
               <div style={{ marginTop: 16 }}>
