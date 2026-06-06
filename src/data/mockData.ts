@@ -226,7 +226,25 @@ export const mockWorkOrders: WorkOrder[] = [
     disposalPhotos: [],
     reviewDeadline: '2026-06-12',
     reviewPhotos: [],
-    notes: '重点区域，需加强复查'
+    notes: '重点区域，需加强复查',
+    actions: [
+      {
+        id: 'a1',
+        type: 'created',
+        title: '创建工单',
+        operator: '管理员',
+        time: '2026-05-29 09:30:00',
+        description: '工单已创建，处置截止日期：2026-06-10'
+      },
+      {
+        id: 'a2',
+        type: 'started',
+        title: '开始处理',
+        operator: '赵队长',
+        time: '2026-05-30 08:00:00',
+        description: '工单已转入处理中状态'
+      }
+    ]
   },
   {
     id: 'wo002',
@@ -246,7 +264,17 @@ export const mockWorkOrders: WorkOrder[] = [
     woodCount: 32,
     woodRecords: generateWoodRecords('wo002', 32, '东山林场A区', '粉碎'),
     disposalPhotos: [],
-    reviewPhotos: []
+    reviewPhotos: [],
+    actions: [
+      {
+        id: 'a1',
+        type: 'created',
+        title: '创建工单',
+        operator: '管理员',
+        time: '2026-06-04 14:20:00',
+        description: '工单已创建，处置截止日期：2026-06-18'
+      }
+    ]
   },
   {
     id: 'wo003',
@@ -266,7 +294,17 @@ export const mockWorkOrders: WorkOrder[] = [
     woodCount: 0,
     woodRecords: [],
     disposalPhotos: [],
-    reviewPhotos: []
+    reviewPhotos: [],
+    actions: [
+      {
+        id: 'a1',
+        type: 'created',
+        title: '创建工单',
+        operator: '管理员',
+        time: '2026-05-20 10:15:00',
+        description: '工单已创建，处置截止日期：2026-06-05'
+      }
+    ]
   },
   {
     id: 'wo004',
@@ -291,7 +329,49 @@ export const mockWorkOrders: WorkOrder[] = [
     reviewDate: '2026-05-28',
     reviewResult: '复查合格，未发现活虫',
     reviewPhotos: [],
-    reviewer: '王工'
+    reviewer: '王工',
+    actions: [
+      {
+        id: 'a1',
+        type: 'created',
+        title: '创建工单',
+        operator: '管理员',
+        time: '2026-05-15 11:00:00',
+        description: '工单已创建，处置截止日期：2026-05-30'
+      },
+      {
+        id: 'a2',
+        type: 'started',
+        title: '开始处理',
+        operator: '李队长',
+        time: '2026-05-18 07:30:00',
+        description: '工单已转入处理中状态'
+      },
+      {
+        id: 'a3',
+        type: 'result_registered',
+        title: '登记处置结果',
+        operator: '李队长',
+        time: '2026-05-22 16:00:00',
+        description: '登记处置结果：完成药剂喷洒，虫口密度明显下降，实际清理疫木0株'
+      },
+      {
+        id: 'a4',
+        type: 'pending_review',
+        title: '进入待复查',
+        operator: '系统',
+        time: '2026-05-22 16:00:00',
+        description: '复查截止日期：2026-05-30'
+      },
+      {
+        id: 'a5',
+        type: 'review_completed',
+        title: '完成复查',
+        operator: '王工',
+        time: '2026-05-28 14:30:00',
+        description: '复查结论：复查合格，未发现活虫'
+      }
+    ]
   }
 ]
 
@@ -450,7 +530,8 @@ export const mockPesticideUsages: PesticideUsage[] = [
     usageDate: '2026-05-30',
     operator: '赵队长',
     location: '南坡林区C区',
-    batchId: 'b001'
+    batchId: 'b001',
+    voided: false
   },
   {
     id: 'pu002',
@@ -463,7 +544,8 @@ export const mockPesticideUsages: PesticideUsage[] = [
     area: 3.5,
     usageDate: '2026-05-22',
     operator: '李队长',
-    location: '中心林区E区'
+    location: '中心林区E区',
+    voided: false
   }
 ]
 

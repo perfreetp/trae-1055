@@ -65,6 +65,23 @@ export interface WoodRecord {
   photos?: string[]
 }
 
+export type WorkOrderActionType = 
+  | 'created' 
+  | 'started' 
+  | 'result_registered' 
+  | 'pending_review' 
+  | 'review_plan_adjusted' 
+  | 'review_completed'
+
+export interface WorkOrderAction {
+  id: string
+  type: WorkOrderActionType
+  title: string
+  operator: string
+  time: string
+  description?: string
+}
+
 export interface WorkOrder {
   id: string
   code: string
@@ -90,7 +107,9 @@ export interface WorkOrder {
   reviewResult?: string
   reviewPhotos: string[]
   reviewer?: string
+  reviewMethod?: string
   notes?: string
+  actions?: WorkOrderAction[]
 }
 
 export interface PesticideBatch {
@@ -147,6 +166,7 @@ export interface PesticideUsage {
   operator: string
   location: string
   batchId?: string
+  voided?: boolean
 }
 
 export interface PublicReport {
@@ -162,6 +182,20 @@ export interface PublicReport {
   handler?: string
   handleDate?: string
   handleResult?: string
+}
+
+export interface PesticideUsageSummary {
+  pesticideName: string
+  totalQuantity: number
+  totalArea: number
+  unit: string
+}
+
+export interface WorkOrderUsageSummary {
+  workOrderCode: string
+  workOrderName: string
+  totalQuantity: number
+  totalArea: number
 }
 
 export interface MonthlyReport {
@@ -181,6 +215,9 @@ export interface MonthlyReport {
   activeTraps: number
   generatedDate: string
   generatedBy: string
+  pesticideUsageByPesticide?: PesticideUsageSummary[]
+  pesticideUsageByWorkOrder?: WorkOrderUsageSummary[]
+  unlinkedPesticideUsage?: { totalQuantity: number; totalArea: number }
 }
 
 export interface EvaluationRecord {

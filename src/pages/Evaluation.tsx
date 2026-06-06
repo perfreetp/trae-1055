@@ -100,9 +100,48 @@ const Evaluation: React.FC = () => {
     const disposalArea = workOrders
       .filter(w => w.status === '已完成' && w.reviewDate && isInMonth(w.reviewDate))
       .reduce((sum, w) => sum + w.area, 0)
-    const monthPesticideUsages = pesticideUsages.filter(u => isInMonth(u.usageDate))
+    const monthPesticideUsages = pesticideUsages.filter(u => isInMonth(u.usageDate) && !u.voided)
     const pesticideQuantity = monthPesticideUsages.reduce((sum, u) => sum + u.quantity, 0)
     const pesticideArea = monthPesticideUsages.reduce((sum, u) => sum + u.area, 0)
+
+    const usageByPesticideMap = new Map<string, { totalQuantity: number; totalArea: number; unit: string }>()
+    monthPesticideUsages.forEach(u => {
+      const existing = usageByPesticideMap.get(u.pesticideName) || { totalQuantity: 0, totalArea: 0, unit: u.unit }
+      usageByPesticideMap.set(u.pesticideName, {
+        totalQuantity: existing.totalQuantity + u.quantity,
+        totalArea: existing.totalArea + u.area,
+        unit: u.unit
+      })
+    })
+    const usageByPesticide = Array.from(usageByPesticideMap.entries()).map(([name, data]) => ({
+      pesticideName: name,
+      ...data
+    }))
+
+    const usageByWorkOrderMap = new Map<string, { workOrderCode: string; workOrderName: string; totalQuantity: number; totalArea: number }>()
+    const linkedUsages = monthPesticideUsages.filter(u => u.workOrderId)
+    linkedUsages.forEach(u => {
+      const order = workOrders.find(w => w.id === u.workOrderId)
+      const key = u.workOrderId
+      const existing = usageByWorkOrderMap.get(key) || {
+        workOrderCode: u.workOrderCode,
+        workOrderName: order?.monitoringPointName || '',
+        totalQuantity: 0,
+        totalArea: 0
+      }
+      usageByWorkOrderMap.set(key, {
+        ...existing,
+        totalQuantity: existing.totalQuantity + u.quantity,
+        totalArea: existing.totalArea + u.area
+      })
+    })
+    const usageByWorkOrder = Array.from(usageByWorkOrderMap.values())
+
+    const unlinkedUsages = monthPesticideUsages.filter(u => !u.workOrderId)
+    const unlinkedUsage = {
+      totalQuantity: unlinkedUsages.reduce((sum, u) => sum + u.quantity, 0),
+      totalArea: unlinkedUsages.reduce((sum, u) => sum + u.area, 0)
+    }
 
     const currentRecord = evaluationRecords.find(r => r.year === selectedYear && r.month === selectedMonth)
     const lastYearRecord = evaluationRecords.find(r => r.year === selectedYear - 1 && r.month === selectedMonth)
@@ -124,7 +163,10 @@ const Evaluation: React.FC = () => {
       avgDensity,
       lastYearAvgDensity,
       densityChange,
-      monthStr
+      monthStr,
+      usageByPesticide,
+      usageByWorkOrder,
+      unlinkedUsage
     }
   }, [selectedYear, selectedMonth, samples, publicReports, workOrders, pesticideUsages, evaluationRecords])
 
@@ -530,13 +572,9 @@ const Evaluation: React.FC = () => {
 
   const handleGenerateMonthlyReport = () => {
     const existing = monthlyReports.find(r => r.year === selectedYear && r.month === selectedMonth)
-    if (existing) {
-      message.warning('该月月报已存在')
-      return
-    }
-
+    
     const newReport: MonthlyReport = {
-      id: uuidv4(),
+      id: existing ? existing.id : uuidv4(),
       year: selectedYear,
       month: selectedMonth,
       newSamples: monthlyStats.newSamples,
@@ -551,11 +589,27 @@ const Evaluation: React.FC = () => {
       newMonitoringPoints: 0,
       activeTraps: 0,
       generatedDate: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-      generatedBy: '管理员'
+      generatedBy: '管理员',
+      pesticideUsageByPesticide: monthlyStats.usageByPesticide,
+      pesticideUsageByWorkOrder: monthlyStats.usageByWorkOrder,
+      unlinkedPesticideUsage: monthlyStats.unlinkedUsage
     }
 
-    setMonthlyReports(prev => [...prev, newReport])
-    message.success('月报生成成功')
+    if (existing) {
+      Modal.confirm({
+        title: '确认覆盖',
+        content: `${selectedYear}年${selectedMonth}月的月报已存在，是否覆盖更新？`,
+        okText: '覆盖',
+        cancelText: '取消',
+        onOk: () => {
+          setMonthlyReports(prev => prev.map(r => r.id === existing.id ? newReport : r))
+          message.success('月报已更新')
+        }
+      })
+    } else {
+      setMonthlyReports(prev => [...prev, newReport])
+      message.success('月报生成成功')
+    }
   }
 
   const handleExportMonthly = () => {
@@ -563,6 +617,25 @@ const Evaluation: React.FC = () => {
     const densityChangeText = Number(stats.densityChange) > 0 
       ? `上升 ${stats.densityChange}%` 
       : `下降 ${Math.abs(Number(stats.densityChange))}%`
+
+    let usageByPesticideText = ''
+    if (stats.usageByPesticide && stats.usageByPesticide.length > 0) {
+      usageByPesticideText = stats.usageByPesticide.map((item: any, i: number) => 
+        `${i + 1}. ${item.pesticideName}：${item.totalQuantity} ${item.unit}，防治面积 ${item.totalArea} 亩`
+      ).join('\n')
+    }
+
+    let usageByWorkOrderText = ''
+    if (stats.usageByWorkOrder && stats.usageByWorkOrder.length > 0) {
+      usageByWorkOrderText = stats.usageByWorkOrder.map((item: any, i: number) => 
+        `${i + 1}. ${item.workOrderCode}（${item.workOrderName}）：${item.totalQuantity} 单位，防治面积 ${item.totalArea} 亩`
+      ).join('\n')
+    }
+
+    let unlinkedUsageText = ''
+    if (stats.unlinkedUsage && stats.unlinkedUsage.totalQuantity > 0) {
+      unlinkedUsageText = `用药数量：${stats.unlinkedUsage.totalQuantity} 单位，防治面积：${stats.unlinkedUsage.totalArea} 亩`
+    }
 
     const content = `
 林业病虫害监测月报
@@ -583,15 +656,26 @@ ${selectedYear}年${selectedMonth}月
 - 累计用药面积：${stats.pesticideArea} 亩
 - 药剂使用量：${stats.pesticideQuantity} 单位
 
-四、虫情分析
+四、用药明细分解
+
+（一）按药剂名称汇总
+${usageByPesticideText || '无'}
+
+（二）按关联工单汇总
+${usageByWorkOrderText || '无'}
+
+（三）未关联工单用药
+${unlinkedUsageText || '无'}
+
+五、虫情分析
 - 本月平均虫口密度：${stats.avgDensity}
 - 去年同期密度：${stats.lastYearAvgDensity}
 - 同比变化：${densityChangeText}
 
-五、工作总结
+六、工作总结
 [此处可填写本月工作总结]
 
-六、下月计划
+七、下月计划
 [此处可填写下月工作计划]
 
 报告生成单位：林业站
@@ -1203,6 +1287,45 @@ ${selectedYear}年${selectedMonth}月
               <Descriptions.Item label="本月平均密度">{viewingMonthlyReport.avgDensity}</Descriptions.Item>
               <Descriptions.Item label="去年同期密度">{viewingMonthlyReport.lastYearAvgDensity}</Descriptions.Item>
             </Descriptions>
+
+            <Divider orientation="left">用药明细分解</Divider>
+
+            <h4 style={{ marginBottom: 8, marginTop: 16 }}>一、按药剂名称汇总</h4>
+            <Table
+              size="small"
+              dataSource={viewingMonthlyReport.pesticideUsageByPesticide || []}
+              rowKey="pesticideName"
+              pagination={false}
+              columns={[
+                { title: '药剂名称', dataIndex: 'pesticideName', key: 'pesticideName' },
+                { title: '使用数量', dataIndex: 'totalQuantity', key: 'totalQuantity', render: (v, r) => `${v} ${r.unit}` },
+                { title: '防治面积', dataIndex: 'totalArea', key: 'totalArea', render: v => `${v} 亩` }
+              ]}
+            />
+
+            <h4 style={{ marginBottom: 8, marginTop: 16 }}>二、按关联工单汇总</h4>
+            <Table
+              size="small"
+              dataSource={viewingMonthlyReport.pesticideUsageByWorkOrder || []}
+              rowKey="workOrderCode"
+              pagination={false}
+              columns={[
+                { title: '工单编号', dataIndex: 'workOrderCode', key: 'workOrderCode', width: 140 },
+                { title: '监测点', dataIndex: 'workOrderName', key: 'workOrderName' },
+                { title: '用药数量', dataIndex: 'totalQuantity', key: 'totalQuantity' },
+                { title: '防治面积', dataIndex: 'totalArea', key: 'totalArea', render: v => `${v} 亩` }
+              ]}
+            />
+
+            {viewingMonthlyReport.unlinkedPesticideUsage && viewingMonthlyReport.unlinkedPesticideUsage.totalQuantity > 0 && (
+              <>
+                <h4 style={{ marginBottom: 8, marginTop: 16 }}>三、未关联工单用药</h4>
+                <Descriptions bordered size="small" column={2}>
+                  <Descriptions.Item label="用药数量">{viewingMonthlyReport.unlinkedPesticideUsage.totalQuantity} 单位</Descriptions.Item>
+                  <Descriptions.Item label="防治面积">{viewingMonthlyReport.unlinkedPesticideUsage.totalArea} 亩</Descriptions.Item>
+                </Descriptions>
+              </>
+            )}
           </div>
         )}
       </Modal>

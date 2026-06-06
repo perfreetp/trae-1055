@@ -22,7 +22,8 @@ import {
   Alert,
   Image,
   Pagination,
-  Divider
+  Divider,
+  Timeline
 } from 'antd'
 import {
   PlusOutlined,
@@ -34,13 +35,16 @@ import {
   WarningOutlined,
   ClockCircleOutlined,
   DeleteOutlined,
-  SearchOutlined
+  SearchOutlined,
+  CalendarOutlined,
+  UserOutlined,
+  SettingOutlined
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 import { v4 as uuidv4 } from 'uuid'
 import { useApp } from '../store/AppContext'
-import { WorkOrder, WoodRecord, WorkOrderStatus, DisposalMethod } from '../types'
+import { WorkOrder, WoodRecord, WorkOrderStatus, DisposalMethod, WorkOrderAction } from '../types'
 import { isOverdue, getWorkOrderDisplayStatus, handleFileUpload, generateCode, isWorkOrderOverdue } from '../utils'
 
 const { Option } = Select
@@ -61,12 +65,14 @@ const WorkOrders: React.FC = () => {
   const [detailVisible, setDetailVisible] = useState(false)
   const [resultVisible, setResultVisible] = useState(false)
   const [reviewVisible, setReviewVisible] = useState(false)
+  const [reviewPlanVisible, setReviewPlanVisible] = useState(false)
   const [editingOrder, setEditingOrder] = useState<WorkOrder | null>(null)
   const [viewingOrder, setViewingOrder] = useState<WorkOrder | null>(null)
   const [activeTab, setActiveTab] = useState('all')
   const [form] = Form.useForm()
   const [resultForm] = Form.useForm()
   const [reviewForm] = Form.useForm()
+  const [reviewPlanForm] = Form.useForm()
   const [disposalPhotos, setDisposalPhotos] = useState<string[]>([])
   const [reviewPhotos, setReviewPhotos] = useState<string[]>([])
   const [woodPage, setWoodPage] = useState(1)
@@ -264,7 +270,10 @@ const WorkOrders: React.FC = () => {
               <Button type="link" size="small" icon={<CheckCircleOutlined />} onClick={() => handleRecordResult(record)}>登记结果</Button>
             )}
             {record.status === '待复查' && (
-              <Button type="link" size="small" icon={<SearchOutlined />} onClick={() => handleReview(record)}>复查</Button>
+              <>
+                <Button type="link" size="small" icon={<SettingOutlined />} onClick={() => handleAdjustReviewPlan(record)}>调整计划</Button>
+                <Button type="link" size="small" icon={<SearchOutlined />} onClick={() => handleReview(record)}>复查</Button>
+              </>
             )}
             <Button type="link" size="small" icon={<PrinterOutlined />} onClick={() => handlePrint(record)}>打印</Button>
           </Space>
@@ -311,8 +320,20 @@ const WorkOrders: React.FC = () => {
   }
 
   const handleStartProcessing = (record: WorkOrder) => {
+    const newAction: WorkOrderAction = {
+      id: uuidv4(),
+      type: 'started',
+      title: '开始处理',
+      operator: '管理员',
+      time: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+      description: '工单已转入处理中状态'
+    }
     setWorkOrders(prev =>
-      prev.map(w => w.id === record.id ? { ...w, status: '处理中' } : w)
+      prev.map(w => w.id === record.id ? { 
+        ...w, 
+        status: '处理中',
+        actions: [...(w.actions || []), newAction]
+      } : w)
     )
     message.success('已开始处理')
   }
@@ -360,7 +381,17 @@ const WorkOrders: React.FC = () => {
           ...formattedValues,
           woodRecords: [],
           disposalPhotos: [],
-          reviewPhotos: []
+          reviewPhotos: [],
+          actions: [
+            {
+              id: uuidv4(),
+              type: 'created',
+              title: '创建工单',
+              operator: '管理员',
+              time: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+              description: `工单已创建，处置截止日期：${formattedValues.deadline}`
+            }
+          ]
         }
         setWorkOrders(prev => [...prev, newOrder])
         message.success('工单创建成功')
@@ -372,8 +403,29 @@ const WorkOrders: React.FC = () => {
   const handleResultSubmit = () => {
     resultForm.validateFields().then(values => {
       if (viewingOrder) {
-        const actualWoodCount = values.woodCount || viewingOrder.woodCount
-        const woodRecords = generateWoodRecords(viewingOrder, actualWoodCount)
+        const actualWoodCount = values.woodCount !== undefined ? values.woodCount : viewingOrder.woodCount
+        const woodRecords = actualWoodCount > 0 ? generateWoodRecords(viewingOrder, actualWoodCount) : []
+        
+        const actions: WorkOrderAction[] = [
+          ...(viewingOrder.actions || []),
+          {
+            id: uuidv4(),
+            type: 'result_registered',
+            title: '登记处置结果',
+            operator: '管理员',
+            time: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+            description: `登记处置结果：${values.disposalResult || '已完成处置'}，实际清理疫木${actualWoodCount}株`
+          },
+          {
+            id: uuidv4(),
+            type: 'pending_review',
+            title: '进入待复查',
+            operator: '系统',
+            time: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+            description: `复查截止日期：${values.reviewDeadline.format('YYYY-MM-DD')}`
+          }
+        ]
+
         setWorkOrders(prev =>
           prev.map(w =>
             w.id === viewingOrder.id
@@ -386,7 +438,8 @@ const WorkOrders: React.FC = () => {
                   woodCount: actualWoodCount,
                   woodRecords: woodRecords,
                   reviewDeadline: values.reviewDeadline.format('YYYY-MM-DD'),
-                  disposalPhotos: disposalPhotos
+                  disposalPhotos: disposalPhotos,
+                  actions
                 }
               : w
           )
@@ -400,6 +453,14 @@ const WorkOrders: React.FC = () => {
   const handleReviewSubmit = () => {
     reviewForm.validateFields().then(values => {
       if (viewingOrder) {
+        const newAction: WorkOrderAction = {
+          id: uuidv4(),
+          type: 'review_completed',
+          title: '完成复查',
+          operator: values.reviewer || '管理员',
+          time: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+          description: `复查结论：${values.reviewResult || '复查通过'}`
+        }
         setWorkOrders(prev =>
           prev.map(w =>
             w.id === viewingOrder.id
@@ -409,7 +470,8 @@ const WorkOrders: React.FC = () => {
                   reviewDate: values.reviewDate.format('YYYY-MM-DD'),
                   reviewResult: values.reviewResult,
                   reviewer: values.reviewer,
-                  reviewPhotos: reviewPhotos
+                  reviewPhotos: reviewPhotos,
+                  actions: [...(w.actions || []), newAction]
                 }
               : w
           )
@@ -420,9 +482,50 @@ const WorkOrders: React.FC = () => {
     })
   }
 
+  const handleAdjustReviewPlan = (record: WorkOrder) => {
+    setViewingOrder(record)
+    reviewPlanForm.resetFields()
+    reviewPlanForm.setFieldsValue({
+      reviewDeadline: record.reviewDeadline ? dayjs(record.reviewDeadline) : dayjs().add(7, 'day'),
+      reviewer: record.reviewer || '',
+      reviewMethod: '现场复查'
+    })
+    setReviewPlanVisible(true)
+  }
+
+  const handleReviewPlanSubmit = () => {
+    reviewPlanForm.validateFields().then(values => {
+      if (viewingOrder) {
+        const newAction: WorkOrderAction = {
+          id: uuidv4(),
+          type: 'review_plan_adjusted',
+          title: '调整复查计划',
+          operator: '管理员',
+          time: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+          description: `复查截止日期调整为${values.reviewDeadline.format('YYYY-MM-DD')}，复查人：${values.reviewer || '未指定'}，复查方式：${values.reviewMethod || '未指定'}`
+        }
+        setWorkOrders(prev =>
+          prev.map(w =>
+            w.id === viewingOrder.id
+              ? {
+                  ...w,
+                  reviewDeadline: values.reviewDeadline.format('YYYY-MM-DD'),
+                  reviewer: values.reviewer,
+                  reviewMethod: values.reviewMethod,
+                  actions: [...(w.actions || []), newAction]
+                }
+              : w
+          )
+        )
+        message.success('复查计划已更新')
+        setReviewPlanVisible(false)
+      }
+    })
+  }
+
   const handlePrint = (record: WorkOrder) => {
     const woodRecords = generateWoodRecords(record)
-    const usages = pesticideUsages.filter(u => u.workOrderId === record.id)
+    const usages = pesticideUsages.filter(u => u.workOrderId === record.id && !u.voided)
     const totalPesticideArea = usages.reduce((sum, u) => sum + u.area, 0)
     const totalPesticideQuantity = usages.reduce((sum, u) => sum + u.quantity, 0)
     
@@ -1067,6 +1170,45 @@ const WorkOrders: React.FC = () => {
       </Modal>
 
       <Modal
+        title="调整复查计划"
+        open={reviewPlanVisible}
+        onOk={handleReviewPlanSubmit}
+        onCancel={() => setReviewPlanVisible(false)}
+        width={500}
+      >
+        <Form form={reviewPlanForm} layout="vertical">
+          <Form.Item
+            name="reviewDeadline"
+            label="复查截止日期"
+            rules={[{ required: true, message: '请选择日期' }]}
+          >
+            <DatePicker style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item
+            name="reviewer"
+            label="指定复查人"
+          >
+            <Input placeholder="请输入复查人姓名" />
+          </Form.Item>
+          <Form.Item
+            name="reviewMethod"
+            label="复查方式"
+            rules={[{ required: true, message: '请选择' }]}
+          >
+            <Select>
+              <Option value="现场复查">现场复查</Option>
+              <Option value="照片复查">照片复查</Option>
+              <Option value="无人机巡查">无人机巡查</Option>
+              <Option value="其他">其他</Option>
+            </Select>
+          </Form.Item>
+          <Form.Item label="说明">
+            <TextArea rows={2} placeholder="请输入调整说明（可选）" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
         title="工单详情"
         open={detailVisible}
         onCancel={() => setDetailVisible(false)}
@@ -1097,9 +1239,9 @@ const WorkOrders: React.FC = () => {
               {viewingOrder.status === '待复查' ? (
                 <>
                   <Descriptions.Item label="复查截止日期">
-                    <span style={{ color: isOverdue(viewingOrder.reviewDeadline, viewingOrder.status) ? '#ff4d4f' : 'inherit', fontWeight: 600 }}>
+                    <span style={{ color: isOverdue(viewingOrder.reviewDeadline || '', viewingOrder.status) ? '#ff4d4f' : 'inherit', fontWeight: 600 }}>
                       {viewingOrder.reviewDeadline}
-                      {isOverdue(viewingOrder.reviewDeadline, viewingOrder.status) && <Tag color="red" style={{ marginLeft: 8 }}>复查超期</Tag>}
+                      {isOverdue(viewingOrder.reviewDeadline || '', viewingOrder.status) && <Tag color="red" style={{ marginLeft: 8 }}>复查超期</Tag>}
                     </span>
                   </Descriptions.Item>
                   <Descriptions.Item label="原处置截止">{viewingOrder.deadline}</Descriptions.Item>
@@ -1140,7 +1282,7 @@ const WorkOrders: React.FC = () => {
             </Descriptions>
 
             {(() => {
-              const usages = pesticideUsages.filter(u => u.workOrderId === viewingOrder.id)
+              const usages = pesticideUsages.filter(u => u.workOrderId === viewingOrder.id && !u.voided)
               const totalArea = usages.reduce((sum, u) => sum + u.area, 0)
               const totalQuantity = usages.reduce((sum, u) => sum + u.quantity, 0)
               if (usages.length > 0) {
@@ -1230,6 +1372,36 @@ const WorkOrders: React.FC = () => {
                     ))}
                   </Image.PreviewGroup>
                 </div>
+              </div>
+            )}
+
+            {viewingOrder.actions && viewingOrder.actions.length > 0 && (
+              <div style={{ marginTop: 20 }}>
+                <Divider orientation="left">操作时间线</Divider>
+                <Timeline
+                  items={viewingOrder.actions.map(action => ({
+                    color: action.type === 'created' ? 'blue' 
+                          : action.type === 'started' ? 'cyan'
+                          : action.type === 'result_registered' ? 'green'
+                          : action.type === 'pending_review' ? 'orange'
+                          : action.type === 'review_plan_adjusted' ? 'purple'
+                          : action.type === 'review_completed' ? 'success'
+                          : 'gray',
+                    children: (
+                      <div>
+                        <div style={{ fontWeight: 500 }}>{action.title}</div>
+                        <div style={{ color: '#666', fontSize: 12, marginTop: 2 }}>
+                          {action.operator} · {action.time}
+                        </div>
+                        {action.description && (
+                          <div style={{ color: '#888', fontSize: 12, marginTop: 4 }}>
+                            {action.description}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  }))}
+                />
               </div>
             )}
           </div>

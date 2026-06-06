@@ -59,15 +59,18 @@ const PesticideInventory: React.FC = () => {
 
   const [modalVisible, setModalVisible] = useState(false)
   const [usageModalVisible, setUsageModalVisible] = useState(false)
+  const [editUsageVisible, setEditUsageVisible] = useState(false)
   const [batchModalVisible, setBatchModalVisible] = useState(false)
   const [stockInModalVisible, setStockInModalVisible] = useState(false)
   const [viewDetailVisible, setViewDetailVisible] = useState(false)
   const [editingPesticide, setEditingPesticide] = useState<Pesticide | null>(null)
   const [viewingPesticide, setViewingPesticide] = useState<Pesticide | null>(null)
+  const [editingUsage, setEditingUsage] = useState<any>(null)
   const [selectedPesticideForBatch, setSelectedPesticideForBatch] = useState<Pesticide | null>(null)
   const [activeTab, setActiveTab] = useState('inventory')
   const [form] = Form.useForm()
   const [usageForm] = Form.useForm()
+  const [editUsageForm] = Form.useForm()
   const [batchForm] = Form.useForm()
   const [stockInForm] = Form.useForm()
 
@@ -77,8 +80,9 @@ const PesticideInventory: React.FC = () => {
     dayjs(p.expiryDate).diff(dayjs(), 'month') <= 3 && dayjs(p.expiryDate).isAfter(dayjs())
   ).length
   const expiredCount = pesticides.filter(p => dayjs(p.expiryDate).isBefore(dayjs())).length
-  const totalUsage = pesticideUsages.reduce((sum, u) => sum + u.quantity, 0)
-  const totalArea = pesticideUsages.reduce((sum, u) => sum + u.area, 0)
+  const activeUsages = pesticideUsages.filter(u => !u.voided)
+  const totalUsage = activeUsages.reduce((sum, u) => sum + u.quantity, 0)
+  const totalArea = activeUsages.reduce((sum, u) => sum + u.area, 0)
 
   const purchaseSuggestions = useMemo(() => {
     return pesticides
@@ -325,6 +329,42 @@ const PesticideInventory: React.FC = () => {
       dataIndex: 'operator',
       key: 'operator',
       width: 100
+    },
+    {
+      title: '状态',
+      dataIndex: 'voided',
+      key: 'voided',
+      width: 80,
+      render: (voided: boolean) => (
+        <Tag color={voided ? 'default' : 'green'}>
+          {voided ? '已作废' : '有效'}
+        </Tag>
+      )
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 160,
+      fixed: 'right',
+      render: (_, record) => (
+        <Space size="small">
+          {!record.voided && (
+            <>
+              <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEditUsage(record)}>编辑</Button>
+              <Popconfirm
+                title="确定作废此记录？"
+                description="作废后将从库存、工单累计和月报统计中扣回"
+                onConfirm={() => handleVoidUsage(record)}
+                okText="确定作废"
+                cancelText="取消"
+                okButtonProps={{ danger: true }}
+              >
+                <Button type="link" size="small" danger>作废</Button>
+              </Popconfirm>
+            </>
+          )}
+        </Space>
+      )
     }
   ]
 
@@ -520,7 +560,8 @@ const PesticideInventory: React.FC = () => {
         pesticideName: pesticide?.name || '',
         unit: pesticide?.unit || '',
         workOrderCode: workOrder?.code || '',
-        usageDate: values.usageDate.format('YYYY-MM-DD')
+        usageDate: values.usageDate.format('YYYY-MM-DD'),
+        voided: false
       }
 
       setPesticideUsages(prev => [...prev, newUsage])
@@ -550,6 +591,97 @@ const PesticideInventory: React.FC = () => {
       setUsageModalVisible(false)
       usageForm.resetFields()
     })
+  }
+
+  const handleEditUsage = (record: any) => {
+    setEditingUsage(record)
+    editUsageForm.resetFields()
+    editUsageForm.setFieldsValue({
+      ...record,
+      usageDate: dayjs(record.usageDate),
+      pesticideId: record.pesticideId
+    })
+    setEditUsageVisible(true)
+  }
+
+  const handleEditUsageSubmit = () => {
+    editUsageForm.validateFields().then(values => {
+      if (!editingUsage) return
+
+      const pesticide = pesticides.find(p => p.id === values.pesticideId)
+      const workOrder = workOrders.find(w => w.id === values.workOrderId)
+      
+      const quantityDiff = values.quantity - editingUsage.quantity
+
+      if (quantityDiff > 0 && pesticide && pesticide.stock < quantityDiff) {
+        message.error('库存不足，无法增加用量')
+        return
+      }
+
+      setPesticideUsages(prev =>
+        prev.map(u =>
+          u.id === editingUsage.id
+            ? {
+                ...u,
+                ...values,
+                pesticideName: pesticide?.name || u.pesticideName,
+                unit: pesticide?.unit || u.unit,
+                workOrderCode: workOrder?.code || u.workOrderCode,
+                usageDate: values.usageDate.format('YYYY-MM-DD')
+              }
+            : u
+        )
+      )
+
+      if (quantityDiff !== 0) {
+        setPesticides(prev =>
+          prev.map(p =>
+            p.id === editingUsage.pesticideId
+              ? { ...p, stock: p.stock - quantityDiff }
+              : p
+          )
+        )
+      }
+
+      message.success('使用记录已更新')
+      setEditUsageVisible(false)
+      setEditingUsage(null)
+    })
+  }
+
+  const handleVoidUsage = (record: any) => {
+    setPesticideUsages(prev =>
+      prev.map(u =>
+        u.id === record.id ? { ...u, voided: true } : u
+      )
+    )
+
+    setPesticides(prev =>
+      prev.map(p =>
+        p.id === record.pesticideId
+          ? { ...p, stock: p.stock + record.quantity }
+          : p
+      )
+    )
+
+    setInventoryLogs(prev => [
+      ...prev,
+      {
+        id: uuidv4(),
+        type: 'in' as const,
+        pesticideId: record.pesticideId,
+        pesticideName: record.pesticideName,
+        quantity: record.quantity,
+        unit: record.unit,
+        operator: '系统',
+        date: dayjs().format('YYYY-MM-DD'),
+        workOrderId: record.workOrderId,
+        workOrderCode: record.workOrderCode,
+        remark: `作废回库：原记录${record.id}`
+      }
+    ])
+
+    message.success('使用记录已作废，库存已回退')
   }
 
   const handleExport = () => {
@@ -789,6 +921,7 @@ const PesticideInventory: React.FC = () => {
               columns={usageColumns}
               dataSource={pesticideUsages}
               rowKey="id"
+              scroll={{ x: 1200 }}
               pagination={{ pageSize: 10 }}
             />
           </TabPane>
@@ -1060,6 +1193,66 @@ const PesticideInventory: React.FC = () => {
             name="workOrderId"
             label="关联工单"
           >
+            <Select placeholder="请选择（可选）" allowClear>
+              {workOrders.map(w => (
+                <Option key={w.id} value={w.id}>{w.code} - {w.monitoringPointName}</Option>
+              ))}
+            </Select>
+          </Form.Item>
+          <Form.Item name="remark" label="备注">
+            <TextArea rows={2} placeholder="请输入备注" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="编辑药剂使用记录"
+        open={editUsageVisible}
+        onOk={handleEditUsageSubmit}
+        onCancel={() => {
+          setEditUsageVisible(false)
+          setEditingUsage(null)
+        }}
+        width={600}
+      >
+        <Form form={editUsageForm} layout="vertical">
+          <Form.Item name="pesticideId" label="选择药剂" rules={[{ required: true }]}>
+            <Select placeholder="请选择药剂">
+              {pesticides.map(p => (
+                <Option key={p.id} value={p.id}>
+                  {p.name} ({p.specification}) - 库存: {p.stock}{p.unit}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="quantity" label="使用数量" rules={[{ required: true }]}>
+                <InputNumber min={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="area" label="防治面积(亩)" rules={[{ required: true }]}>
+                <InputNumber min={0} step={0.1} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="usageDate" label="使用日期" rules={[{ required: true }]}>
+            <DatePicker style={{ width: '100%' }} />
+          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="operator" label="操作人员" rules={[{ required: true }]}>
+                <Input placeholder="请输入姓名" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="location" label="使用地点" rules={[{ required: true }]}>
+                <Input placeholder="请输入地点" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="workOrderId" label="关联工单">
             <Select placeholder="请选择（可选）" allowClear>
               {workOrders.map(w => (
                 <Option key={w.id} value={w.id}>{w.code} - {w.monitoringPointName}</Option>
