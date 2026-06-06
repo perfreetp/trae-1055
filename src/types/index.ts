@@ -2,7 +2,7 @@ export type PestType = '松材线虫' | '美国白蛾' | '松褐天牛' | '其�
 
 export type HazardLevel = '轻度' | '中度' | '重度' | '极重度'
 
-export type WorkOrderStatus = '待处理' | '处理中' | '已完成' | '已超期'
+export type WorkOrderStatus = '待处理' | '处理中' | '待复查' | '已完成'
 
 export type DisposalMethod = '焚烧' | '粉碎' | '熏蒸' | '其他'
 
@@ -52,6 +52,19 @@ export interface Sample {
   notes?: string
 }
 
+export interface WoodRecord {
+  id: string
+  workOrderId: string
+  no: number
+  location: string
+  treeSpecies: string
+  diameter: number
+  height?: number
+  disposalMethod: DisposalMethod
+  result: string
+  photos?: string[]
+}
+
 export interface WorkOrder {
   id: string
   code: string
@@ -68,10 +81,43 @@ export interface WorkOrder {
   team: string
   disposalMethod: DisposalMethod
   woodCount: number
+  woodRecords: WoodRecord[]
   disposalResult?: string
   disposalDate?: string
-  photos: string[]
+  disposalPhotos: string[]
+  reviewDate?: string
+  reviewDeadline?: string
+  reviewResult?: string
+  reviewPhotos: string[]
+  reviewer?: string
   notes?: string
+}
+
+export interface PesticideBatch {
+  id: string
+  pesticideId: string
+  batchNo: string
+  quantity: number
+  unit: string
+  purchaseDate: string
+  expiryDate: string
+  supplier?: string
+  price?: number
+}
+
+export interface InventoryLog {
+  id: string
+  type: 'in' | 'out'
+  pesticideId: string
+  pesticideName: string
+  batchId?: string
+  quantity: number
+  unit: string
+  operator: string
+  date: string
+  workOrderId?: string
+  workOrderCode?: string
+  remark?: string
 }
 
 export interface Pesticide {
@@ -84,6 +130,7 @@ export interface Pesticide {
   warningStock: number
   purchaseDate: string
   expiryDate: string
+  batches: PesticideBatch[]
   notes?: string
 }
 
@@ -92,12 +139,14 @@ export interface PesticideUsage {
   pesticideId: string
   pesticideName: string
   workOrderId: string
+  workOrderCode: string
   quantity: number
   unit: string
   area: number
   usageDate: string
   operator: string
   location: string
+  batchId?: string
 }
 
 export interface PublicReport {
@@ -113,6 +162,24 @@ export interface PublicReport {
   handler?: string
   handleDate?: string
   handleResult?: string
+}
+
+export interface MonthlyReport {
+  id: string
+  year: number
+  month: number
+  newSamples: number
+  publicReports: number
+  completedOrders: number
+  woodCount: number
+  disposalArea: number
+  pesticideUsage: number
+  avgDensity: number
+  lastYearAvgDensity: number
+  newMonitoringPoints: number
+  activeTraps: number
+  generatedDate: string
+  generatedBy: string
 }
 
 export interface EvaluationRecord {

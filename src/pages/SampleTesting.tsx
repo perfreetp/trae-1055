@@ -15,15 +15,16 @@ import {
   Upload,
   Row,
   Col,
-  Image
+  Image,
+  Tooltip
 } from 'antd'
 import {
   PlusOutlined,
-  UploadOutlined,
   EyeOutlined,
   EditOutlined,
   FileTextOutlined,
-  CheckCircleOutlined
+  CheckCircleOutlined,
+  DeleteOutlined
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import type { UploadProps } from 'antd'
@@ -31,6 +32,7 @@ import dayjs from 'dayjs'
 import { v4 as uuidv4 } from 'uuid'
 import { useApp } from '../store/AppContext'
 import { Sample } from '../types'
+import { handleFileUpload } from '../utils'
 
 const { Option } = Select
 const { TextArea } = Input
@@ -43,6 +45,8 @@ const SampleTesting: React.FC = () => {
   const [viewingSample, setViewingSample] = useState<Sample | null>(null)
   const [form] = Form.useForm()
   const [photoList, setPhotoList] = useState<string[]>([])
+  const [previewVisible, setPreviewVisible] = useState(false)
+  const [previewImage, setPreviewImage] = useState('')
 
   const columns: ColumnsType<Sample> = [
     {
@@ -111,8 +115,8 @@ const SampleTesting: React.FC = () => {
       render: (status: string) => {
         const colors: Record<string, string> = {
           '待送检': 'default',
-          '送检中': 'blue',
-          '已检测': 'green'
+          '送检中': 'processing',
+          '已检测': 'success'
         }
         return <Tag color={colors[status]}>{status}</Tag>
       }
@@ -123,9 +127,24 @@ const SampleTesting: React.FC = () => {
       key: 'microPhotos',
       width: 100,
       render: (photos: string[]) => (
-        <Tag color={photos.length > 0 ? 'green' : 'default'}>
-          {photos.length}张
-        </Tag>
+        <Space>
+          <Tag color={photos.length > 0 ? 'green' : 'default'}>
+            {photos.length}张
+          </Tag>
+          {photos.length > 0 && (
+            <Image.PreviewGroup>
+              {photos.slice(0, 3).map((photo, index) => (
+                <Image
+                  key={index}
+                  width={32}
+                  height={32}
+                  src={photo}
+                  style={{ objectFit: 'cover', borderRadius: 4 }}
+                />
+              ))}
+            </Image.PreviewGroup>
+          )}
+        </Space>
       )
     },
     {
@@ -147,15 +166,32 @@ const SampleTesting: React.FC = () => {
     }
   ]
 
-  const uploadProps: UploadProps = {
+  const customUploadProps: UploadProps = {
     listType: 'picture-card',
-    beforeUpload: () => false,
-    onChange: (info) => {
-      if (info.fileList) {
-        const newPhotos = info.fileList.map((f: any) => f.url || f.name)
-        setPhotoList(newPhotos)
+    multiple: true,
+    beforeUpload: async (file) => {
+      try {
+        const base64 = await handleFileUpload(file)
+        if (base64) {
+          setPhotoList(prev => [...prev, base64])
+        }
+      } catch (e) {
+        message.error('图片上传失败')
       }
-    }
+      return false
+    },
+    onRemove: (file) => {
+      const index = file.uid ? parseInt(file.uid) : photoList.indexOf(file.url || '')
+      if (index >= 0 && index < photoList.length) {
+        setPhotoList(prev => prev.filter((_, i) => i !== index))
+      }
+    },
+    fileList: photoList.map((url, index) => ({
+      uid: String(index),
+      name: `照片${index + 1}`,
+      status: 'done' as const,
+      url: url
+    }))
   }
 
   const handleView = (record: Sample) => {
@@ -165,7 +201,7 @@ const SampleTesting: React.FC = () => {
 
   const handleEdit = (record: Sample) => {
     setEditingSample(record)
-    setPhotoList(record.microPhotos || [])
+    setPhotoList([...record.microPhotos])
     form.setFieldsValue({
       ...record,
       collectDate: dayjs(record.collectDate),
@@ -195,7 +231,7 @@ const SampleTesting: React.FC = () => {
 
   const handleRecordResult = (record: Sample) => {
     setEditingSample(record)
-    setPhotoList(record.microPhotos || [])
+    setPhotoList([...record.microPhotos])
     form.setFieldsValue({
       ...record,
       collectDate: dayjs(record.collectDate)
@@ -210,13 +246,16 @@ const SampleTesting: React.FC = () => {
         ...values,
         collectDate: values.collectDate.format('YYYY-MM-DD'),
         labDate: values.labDate ? values.labDate.format('YYYY-MM-DD') : undefined,
-        monitoringPointName: mp?.name || '',
-        microPhotos: photoList
+        monitoringPointName: mp?.name || ''
       }
 
       if (editingSample) {
         setSamples(prev =>
-          prev.map(s => (s.id === editingSample.id ? { ...s, ...formattedValues } : s))
+          prev.map(s => (s.id === editingSample.id ? { 
+            ...s, 
+            ...formattedValues, 
+            microPhotos: photoList 
+          } : s))
         )
         message.success('样本信息更新成功')
       } else {
@@ -230,6 +269,10 @@ const SampleTesting: React.FC = () => {
       }
       setModalVisible(false)
     })
+  }
+
+  const removePhoto = (index: number) => {
+    setPhotoList(prev => prev.filter((_, i) => i !== index))
   }
 
   return (
@@ -257,6 +300,7 @@ const SampleTesting: React.FC = () => {
         onOk={handleSubmit}
         onCancel={() => setModalVisible(false)}
         width={700}
+        destroyOnClose
       >
         <Form form={form} layout="vertical">
           <Row gutter={16}>
@@ -342,14 +386,57 @@ const SampleTesting: React.FC = () => {
               </Form.Item>
             </Col>
           </Row>
+          
           <Form.Item label="显微照片">
-            <Upload {...uploadProps}>
+            <div className="photo-grid" style={{ marginBottom: 12 }}>
+              {photoList.map((photo, index) => (
+                <div key={index} className="photo-item">
+                  <Image src={photo} alt={`照片${index + 1}`} preview={false} />
+                  <div style={{
+                    position: 'absolute',
+                    top: 4,
+                    right: 4,
+                    background: 'rgba(0,0,0,0.6)',
+                    borderRadius: '50%',
+                    width: 20,
+                    height: 20,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    color: 'white'
+                  }}
+                    onClick={() => removePhoto(index)}
+                  >
+                    <DeleteOutlined style={{ fontSize: 12 }} />
+                  </div>
+                  <div style={{
+                    position: 'absolute',
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    background: 'rgba(0,0,0,0.6)',
+                    color: 'white',
+                    fontSize: 10,
+                    padding: '2px 4px',
+                    textAlign: 'center',
+                    cursor: 'pointer'
+                  }}
+                    onClick={() => { setPreviewImage(photo); setPreviewVisible(true) }}
+                  >
+                    点击预览
+                  </div>
+                </div>
+              ))}
+            </div>
+            <Upload {...customUploadProps}>
               <div>
                 <PlusOutlined />
-                <div style={{ marginTop: 8 }}>上传照片</div>
+                <div style={{ marginTop: 8 }}>添加照片</div>
               </div>
             </Upload>
           </Form.Item>
+
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item
@@ -384,7 +471,7 @@ const SampleTesting: React.FC = () => {
         open={detailVisible}
         onCancel={() => setDetailVisible(false)}
         footer={null}
-        width={600}
+        width={650}
       >
         {viewingSample && (
           <div>
@@ -419,18 +506,22 @@ const SampleTesting: React.FC = () => {
               <div style={{ marginBottom: 16 }}>
                 <strong>显微照片：</strong>
                 <div className="photo-grid" style={{ marginTop: 8 }}>
-                  {viewingSample.microPhotos.map((photo, index) => (
-                    <div key={index} className="photo-item">
-                      <Image src={photo} alt={`照片${index + 1}`} />
-                    </div>
-                  ))}
+                  <Image.PreviewGroup>
+                    {viewingSample.microPhotos.map((photo, index) => (
+                      <div key={index} className="photo-item">
+                        <Image src={photo} alt={`照片${index + 1}`} />
+                      </div>
+                    ))}
+                  </Image.PreviewGroup>
                 </div>
               </div>
             )}
             {viewingSample.labResult && (
               <div style={{ marginBottom: 16 }}>
                 <strong>检测结果：</strong>
-                <p style={{ marginTop: 8, whiteSpace: 'pre-wrap' }}>{viewingSample.labResult}</p>
+                <p style={{ marginTop: 8, whiteSpace: 'pre-wrap', padding: 12, background: '#f5f5f5', borderRadius: 4 }}>
+                  {viewingSample.labResult}
+                </p>
               </div>
             )}
             {viewingSample.notes && (
@@ -441,6 +532,16 @@ const SampleTesting: React.FC = () => {
             )}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={previewVisible}
+        footer={null}
+        onCancel={() => setPreviewVisible(false)}
+        width={800}
+        centered
+      >
+        <img src={previewImage} alt="预览" style={{ width: '100%', height: 'auto' }} />
       </Modal>
     </div>
   )

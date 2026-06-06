@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import {
   Card,
   Row,
@@ -12,32 +12,85 @@ import {
   Modal,
   Descriptions,
   Button,
-  Badge
+  Badge,
+  Form,
+  Input,
+  Divider,
+  DatePicker,
+  InputNumber,
+  message,
+  Space,
+  Checkbox
 } from 'antd'
 import {
   EnvironmentOutlined,
   WarningOutlined,
   BugOutlined,
-  FireOutlined
+  FireOutlined,
+  PlusOutlined
 } from '@ant-design/icons'
+import type { ColumnsType } from 'antd/es/table'
+import dayjs from 'dayjs'
+import { v4 as uuidv4 } from 'uuid'
 import { useApp } from '../store/AppContext'
-import { MonitoringPoint, HazardLevel } from '../types'
+import { MonitoringPoint, HazardLevel, WorkOrder, WorkOrderStatus, DisposalMethod } from '../types'
+import { isOverdue, getWorkOrderDisplayStatus, generateCode } from '../utils'
 
 const { Option } = Select
+const { TextArea } = Input
+
+interface FilterState {
+  pestType: string
+  hazardLevel: string
+  isOverdue: boolean
+  isDisposed: string
+}
 
 const EpidemicMap: React.FC = () => {
-  const { monitoringPoints, workOrders } = useApp()
+  const { monitoringPoints, workOrders, setWorkOrders } = useApp()
   const [selectedPoint, setSelectedPoint] = useState<MonitoringPoint | null>(null)
-  const [filterType, setFilterType] = useState<string>('all')
+  const [createOrderVisible, setCreateOrderVisible] = useState(false)
+  const [orderForm] = Form.useForm()
+  const [filters, setFilters] = useState<FilterState>({
+    pestType: 'all',
+    hazardLevel: 'all',
+    isOverdue: false,
+    isDisposed: 'all'
+  })
 
   const totalPoints = monitoringPoints.length
   const normalPoints = monitoringPoints.filter(p => p.status === '正常').length
   const abnormalPoints = monitoringPoints.filter(p => p.status === '异常').length
   const severePoints = monitoringPoints.filter(p => p.hazardLevel === '重度' || p.hazardLevel === '极重度').length
 
-  const filteredPoints = filterType === 'all'
-    ? monitoringPoints
-    : monitoringPoints.filter(p => p.pestType === filterType)
+  const filteredPoints = useMemo(() => {
+    return monitoringPoints.filter(p => {
+      if (filters.pestType !== 'all' && p.pestType !== filters.pestType) return false
+      if (filters.hazardLevel !== 'all' && p.hazardLevel !== filters.hazardLevel) return false
+      return true
+    })
+  }, [monitoringPoints, filters])
+
+  const filteredWorkOrders = useMemo(() => {
+    return workOrders.filter(w => {
+      const point = monitoringPoints.find(p => p.id === w.monitoringPointId)
+      if (filters.pestType !== 'all' && w.pestType !== filters.pestType) return false
+      if (filters.hazardLevel !== 'all' && w.hazardLevel !== filters.hazardLevel) return false
+      if (filters.isOverdue && !isOverdue(w.deadline, w.status)) return false
+      if (filters.isDisposed === 'disposed' && w.status !== '已完成') return false
+      if (filters.isDisposed === 'notDisposed' && w.status === '已完成') return false
+      return true
+    })
+  }, [workOrders, monitoringPoints, filters])
+
+  const stats = useMemo(() => {
+    const orders = filteredWorkOrders
+    const overdueCount = orders.filter(w => isOverdue(w.deadline, w.status)).length
+    const completedCount = orders.filter(w => w.status === '已完成').length
+    const pendingCount = orders.filter(w => w.status === '待处理' || w.status === '处理中').length
+    const totalArea = orders.filter(w => w.status === '已完成').reduce((sum, w) => sum + w.area, 0)
+    return { overdueCount, completedCount, pendingCount, totalArea, total: orders.length }
+  }, [filteredWorkOrders])
 
   const getPointColor = (status: string, hazardLevel: HazardLevel) => {
     if (status === '异常') {
@@ -59,7 +112,50 @@ const EpidemicMap: React.FC = () => {
     return { left: `${Math.max(5, Math.min(95, x))}%`, top: `${Math.max(5, Math.min(95, y))}%` }
   }
 
-  const activeWorkOrders = workOrders.filter(w => w.status === '处理中' || w.status === '待处理')
+  const handleCreateOrder = () => {
+    if (!selectedPoint) return
+    orderForm.setFieldsValue({
+      monitoringPointId: selectedPoint.id,
+      monitoringPointName: selectedPoint.name,
+      pestType: selectedPoint.pestType,
+      hazardLevel: selectedPoint.hazardLevel,
+      location: selectedPoint.location,
+      area: selectedPoint.pestCount * 0.5,
+      deadline: dayjs().add(7, 'day')
+    })
+    setCreateOrderVisible(true)
+  }
+
+  const handleOrderSubmit = () => {
+    orderForm.validateFields().then(values => {
+      const newOrder: WorkOrder = {
+        id: uuidv4(),
+        code: generateCode('WO'),
+        monitoringPointId: values.monitoringPointId,
+        monitoringPointName: values.monitoringPointName,
+        pestType: values.pestType,
+        hazardLevel: values.hazardLevel,
+        location: values.location,
+        area: values.area,
+        createDate: dayjs().format('YYYY-MM-DD'),
+        deadline: values.deadline.format('YYYY-MM-DD'),
+        status: '待处理' as WorkOrderStatus,
+        assignee: values.assignee || '',
+        team: values.team || '',
+        disposalMethod: values.disposalMethod || '焚烧',
+        woodCount: 0,
+        woodRecords: [],
+        disposalPhotos: [],
+        reviewPhotos: [],
+        notes: values.notes
+      }
+      setWorkOrders(prev => [...prev, newOrder])
+      message.success('处置工单创建成功')
+      setCreateOrderVisible(false)
+      setSelectedPoint(null)
+      orderForm.resetFields()
+    })
+  }
 
   return (
     <div>
@@ -110,16 +206,44 @@ const EpidemicMap: React.FC = () => {
           <Card
             title="疫情分布地图"
             extra={
-              <Select
-                defaultValue="all"
-                style={{ width: 150 }}
-                onChange={setFilterType}
-              >
-                <Option value="all">全部类型</Option>
-                <Option value="松材线虫">松材线虫</Option>
-                <Option value="美国白蛾">美国白蛾</Option>
-                <Option value="松褐天牛">松褐天牛</Option>
-              </Select>
+              <Space wrap>
+                <Select
+                  value={filters.pestType}
+                  style={{ width: 130 }}
+                  onChange={(v) => setFilters(prev => ({ ...prev, pestType: v }))}
+                >
+                  <Option value="all">全部类型</Option>
+                  <Option value="松材线虫">松材线虫</Option>
+                  <Option value="美国白蛾">美国白蛾</Option>
+                  <Option value="松褐天牛">松褐天牛</Option>
+                </Select>
+                <Select
+                  value={filters.hazardLevel}
+                  style={{ width: 130 }}
+                  onChange={(v) => setFilters(prev => ({ ...prev, hazardLevel: v }))}
+                >
+                  <Option value="all">全部等级</Option>
+                  <Option value="轻度">轻度</Option>
+                  <Option value="中度">中度</Option>
+                  <Option value="重度">重度</Option>
+                  <Option value="极重度">极重度</Option>
+                </Select>
+                <Checkbox
+                  checked={filters.isOverdue}
+                  onChange={(e) => setFilters(prev => ({ ...prev, isOverdue: e.target.checked }))}
+                >
+                  仅看超期
+                </Checkbox>
+                <Select
+                  value={filters.isDisposed}
+                  style={{ width: 130 }}
+                  onChange={(v) => setFilters(prev => ({ ...prev, isDisposed: v }))}
+                >
+                  <Option value="all">全部状态</Option>
+                  <Option value="disposed">已处置</Option>
+                  <Option value="notDisposed">未处置</Option>
+                </Select>
+              </Space>
             }
           >
             <div className="map-container">
@@ -140,6 +264,8 @@ const EpidemicMap: React.FC = () => {
               {filteredPoints.map(point => {
                 const pos = getPointPosition(point.lng, point.lat)
                 const colorClass = getPointColor(point.status, point.hazardLevel)
+                const pointOrders = workOrders.filter(w => w.monitoringPointId === point.id)
+                const hasOverdue = pointOrders.some(w => isOverdue(w.deadline, w.status))
                 return (
                   <Tooltip key={point.id} title={
                     <div>
@@ -147,13 +273,20 @@ const EpidemicMap: React.FC = () => {
                       <div>类型：{point.pestType}</div>
                       <div>等级：{point.hazardLevel}</div>
                       <div>虫口：{point.pestCount}</div>
+                      <div>工单：{pointOrders.length}个{hasOverdue && '（含超期）'}</div>
                     </div>
                   }>
                     <div
-                      className={`map-point ${colorClass}`}
-                      style={pos}
-                      onClick={() => setSelectedPoint(point)}
-                    />
+                      style={{ position: 'absolute', ...pos }}
+                    >
+                      <Badge count={hasOverdue ? '!' : 0} size="small" offset={[8, 0]}>
+                        <div
+                          className={`map-point ${colorClass}`}
+                          style={{ width: 20, height: 20, borderRadius: '50%', cursor: 'pointer' }}
+                          onClick={() => setSelectedPoint(point)}
+                        />
+                      </Badge>
+                    </div>
                   </Tooltip>
                 )
               })}
@@ -178,9 +311,31 @@ const EpidemicMap: React.FC = () => {
         </Col>
 
         <Col xs={24} md={8}>
+          <Card title="筛选统计" style={{ marginBottom: 16 }}>
+            <Row gutter={[8, 8]}>
+              <Col span={12}>
+                <Statistic title="工单数" value={stats.total} valueStyle={{ fontSize: 20 }} />
+              </Col>
+              <Col span={12}>
+                <Statistic title="超期数" value={stats.overdueCount} valueStyle={{ color: '#ff4d4f', fontSize: 20 }} />
+              </Col>
+              <Col span={12}>
+                <Statistic title="待处置" value={stats.pendingCount} valueStyle={{ color: '#faad14', fontSize: 20 }} />
+              </Col>
+              <Col span={12}>
+                <Statistic title="已完成" value={stats.completedCount} valueStyle={{ color: '#52c41a', fontSize: 20 }} />
+              </Col>
+            </Row>
+            <Divider style={{ margin: '12px 0' }} />
+            <div style={{ fontSize: 12, color: '#666' }}>
+              <div>累计处置面积：<strong>{stats.totalArea}</strong> 亩</div>
+              <div>筛选条件：{filters.pestType === 'all' ? '全部类型' : filters.pestType} · {filters.hazardLevel === 'all' ? '全部等级' : filters.hazardLevel}</div>
+            </div>
+          </Card>
+
           <Card title="重点关注区域" style={{ marginBottom: 16 }}>
             <List
-              dataSource={monitoringPoints.filter(p => p.status === '异常')}
+              dataSource={filteredPoints.filter(p => p.status === '异常').slice(0, 5)}
               renderItem={item => (
                 <List.Item onClick={() => setSelectedPoint(item)} style={{ cursor: 'pointer' }}>
                   <List.Item.Meta
@@ -206,37 +361,41 @@ const EpidemicMap: React.FC = () => {
             />
           </Card>
 
-          <Card title="进行中处置任务">
+          <Card title="相关处置工单">
             <List
-              dataSource={activeWorkOrders}
-              renderItem={item => (
-                <List.Item>
-                  <List.Item.Meta
-                    avatar={
-                      <Avatar icon={<BugOutlined />} style={{ backgroundColor: '#faad14' }} />
-                    }
-                    title={
-                      <span>
-                        {item.code}
-                        <Tag 
-                          color={item.status === '已超期' ? 'red' : 'blue'} 
-                          style={{ marginLeft: 8 }}
-                        >
-                          {item.status}
-                        </Tag>
-                      </span>
-                    }
-                    description={
-                      <div>
-                        <div>{item.monitoringPointName}</div>
-                        <div style={{ color: '#999', fontSize: 12 }}>
-                          截止：{item.deadline} · {item.team}
+              dataSource={filteredWorkOrders.slice(0, 5)}
+              renderItem={item => {
+                const displayStatus = getWorkOrderDisplayStatus(item)
+                const isOverdueFlag = isOverdue(item.deadline, item.status)
+                return (
+                  <List.Item>
+                    <List.Item.Meta
+                      avatar={
+                        <Avatar icon={<BugOutlined />} style={{ backgroundColor: isOverdueFlag ? '#ff4d4f' : '#faad14' }} />
+                      }
+                      title={
+                        <span>
+                          {item.code}
+                          <Tag 
+                            color={isOverdueFlag ? 'red' : displayStatus.text === '已完成' ? 'green' : 'blue'} 
+                            style={{ marginLeft: 8 }}
+                          >
+                            {displayStatus.text}
+                          </Tag>
+                        </span>
+                      }
+                      description={
+                        <div>
+                          <div>{item.monitoringPointName}</div>
+                          <div style={{ color: '#999', fontSize: 12 }}>
+                            截止：{item.deadline} · {item.team}
+                          </div>
                         </div>
-                      </div>
-                    }
-                  />
-                </List.Item>
-              )}
+                      }
+                    />
+                  </List.Item>
+                )
+              }}
             />
           </Card>
         </Col>
@@ -248,8 +407,11 @@ const EpidemicMap: React.FC = () => {
         onCancel={() => setSelectedPoint(null)}
         footer={[
           <Button key="close" onClick={() => setSelectedPoint(null)}>关闭</Button>,
-          <Button key="order" type="primary">下发处置工单</Button>
+          <Button key="order" type="primary" icon={<PlusOutlined />} onClick={handleCreateOrder}>
+            下发处置工单
+          </Button>
         ]}
+        width={600}
       >
         {selectedPoint && (
           <Descriptions bordered column={2}>
@@ -285,6 +447,90 @@ const EpidemicMap: React.FC = () => {
             </Descriptions.Item>
           </Descriptions>
         )}
+      </Modal>
+
+      <Modal
+        title="创建处置工单"
+        open={createOrderVisible}
+        onOk={handleOrderSubmit}
+        onCancel={() => setCreateOrderVisible(false)}
+        width={600}
+      >
+        <Form form={orderForm} layout="vertical">
+          <Form.Item name="monitoringPointId" hidden>
+            <Input />
+          </Form.Item>
+          <Form.Item name="monitoringPointName" hidden>
+            <Input />
+          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="pestType" label="病虫害类型">
+                <Select disabled>
+                  <Option value="松材线虫">松材线虫</Option>
+                  <Option value="美国白蛾">美国白蛾</Option>
+                  <Option value="松褐天牛">松褐天牛</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="hazardLevel" label="危害等级">
+                <Select disabled>
+                  <Option value="轻度">轻度</Option>
+                  <Option value="中度">中度</Option>
+                  <Option value="重度">重度</Option>
+                  <Option value="极重度">极重度</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="location" label="位置">
+            <Input disabled />
+          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="area"
+                label="防治面积(亩)"
+                rules={[{ required: true, message: '请输入面积' }]}
+              >
+                <InputNumber min={0} step={0.1} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="deadline"
+                label="截止日期"
+                rules={[{ required: true, message: '请选择日期' }]}
+              >
+                <DatePicker style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="assignee" label="负责人">
+                <Input placeholder="请输入负责人姓名" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="team" label="防治队伍">
+                <Input placeholder="请输入防治队伍" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="disposalMethod" label="处置方式">
+            <Select placeholder="请选择处置方式">
+              <Option value="焚烧">焚烧</Option>
+              <Option value="粉碎">粉碎</Option>
+              <Option value="熏蒸">熏蒸</Option>
+              <Option value="其他">其他</Option>
+            </Select>
+          </Form.Item>
+          <Form.Item name="notes" label="备注">
+            <TextArea rows={2} placeholder="请输入备注信息" />
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   )

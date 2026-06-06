@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import {
   Card,
   Table,
@@ -18,7 +18,10 @@ import {
   Alert,
   Descriptions,
   List,
-  Popconfirm
+  Popconfirm,
+  Tabs,
+  Divider,
+  Upload
 } from 'antd'
 import {
   PlusOutlined,
@@ -27,39 +30,74 @@ import {
   EyeOutlined,
   WarningOutlined,
   ExportOutlined,
-  InboxOutlined
+  InboxOutlined,
+  ImportOutlined,
+  ShoppingCartOutlined,
+  FileTextOutlined
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 import { v4 as uuidv4 } from 'uuid'
 import { useApp } from '../store/AppContext'
-import { Pesticide } from '../types'
+import { Pesticide, PesticideBatch, InventoryLog } from '../types'
+import { generateBatchNo, generateCode, fileToBase64, handleFileUpload } from '../utils'
 
 const { Option } = Select
 const { TextArea } = Input
+const { TabPane } = Tabs
 
 const PesticideInventory: React.FC = () => {
-  const { pesticides, setPesticides, pesticideUsages, setPesticideUsages, workOrders } = useApp()
+  const {
+    pesticides,
+    setPesticides,
+    pesticideUsages,
+    setPesticideUsages,
+    workOrders,
+    inventoryLogs,
+    setInventoryLogs
+  } = useApp()
+
   const [modalVisible, setModalVisible] = useState(false)
   const [usageModalVisible, setUsageModalVisible] = useState(false)
+  const [batchModalVisible, setBatchModalVisible] = useState(false)
+  const [stockInModalVisible, setStockInModalVisible] = useState(false)
+  const [viewDetailVisible, setViewDetailVisible] = useState(false)
   const [editingPesticide, setEditingPesticide] = useState<Pesticide | null>(null)
+  const [viewingPesticide, setViewingPesticide] = useState<Pesticide | null>(null)
+  const [selectedPesticideForBatch, setSelectedPesticideForBatch] = useState<Pesticide | null>(null)
+  const [activeTab, setActiveTab] = useState('inventory')
   const [form] = Form.useForm()
   const [usageForm] = Form.useForm()
+  const [batchForm] = Form.useForm()
+  const [stockInForm] = Form.useForm()
 
   const totalValue = pesticides.reduce((sum, p) => sum + p.stock, 0)
   const lowStockCount = pesticides.filter(p => p.stock < p.warningStock).length
   const expiredSoonCount = pesticides.filter(p => 
-    dayjs(p.expiryDate).diff(dayjs(), 'month') <= 3
+    dayjs(p.expiryDate).diff(dayjs(), 'month') <= 3 && dayjs(p.expiryDate).isAfter(dayjs())
   ).length
+  const expiredCount = pesticides.filter(p => dayjs(p.expiryDate).isBefore(dayjs())).length
   const totalUsage = pesticideUsages.reduce((sum, u) => sum + u.quantity, 0)
   const totalArea = pesticideUsages.reduce((sum, u) => sum + u.area, 0)
+
+  const purchaseSuggestions = useMemo(() => {
+    return pesticides
+      .filter(p => p.stock < p.warningStock)
+      .map(p => ({
+        ...p,
+        suggestQuantity: Math.max(p.warningStock * 2 - p.stock, p.warningStock)
+      }))
+  }, [pesticides])
 
   const columns: ColumnsType<Pesticide> = [
     {
       title: '药剂名称',
       dataIndex: 'name',
       key: 'name',
-      width: 150
+      width: 150,
+      render: (name, record) => (
+        <a onClick={() => handleViewDetail(record)}>{name}</a>
+      )
     },
     {
       title: '规格',
@@ -79,13 +117,21 @@ const PesticideInventory: React.FC = () => {
       width: 120,
       render: (stock: number, record) => {
         const isLow = stock < record.warningStock
+        const isExpired = dayjs(record.expiryDate).isBefore(dayjs())
         return (
-          <span style={{ color: isLow ? '#ff4d4f' : 'inherit', fontWeight: isLow ? 600 : 'normal' }}>
+          <span style={{ color: isExpired ? '#999' : isLow ? '#ff4d4f' : 'inherit', fontWeight: isLow ? 600 : 'normal' }}>
             {stock} {record.unit}
-            {isLow && <Tag color="red" style={{ marginLeft: 8 }}>库存不足</Tag>}
+            {isExpired && <Tag color="default" style={{ marginLeft: 8 }}>已过期</Tag>}
+            {!isExpired && isLow && <Tag color="red" style={{ marginLeft: 8 }}>库存不足</Tag>}
           </span>
         )
       }
+    },
+    {
+      title: '批次数量',
+      key: 'batchCount',
+      width: 100,
+      render: (_, record) => record.batches?.length || 0
     },
     {
       title: '预警库存',
@@ -101,41 +147,33 @@ const PesticideInventory: React.FC = () => {
       width: 80
     },
     {
-      title: '采购日期',
-      dataIndex: 'purchaseDate',
-      key: 'purchaseDate',
-      width: 120
-    },
-    {
       title: '有效期至',
       dataIndex: 'expiryDate',
       key: 'expiryDate',
       width: 120,
       render: (date: string) => {
         const diff = dayjs(date).diff(dayjs(), 'month')
-        const isExpiringSoon = diff <= 3
+        const isExpired = dayjs(date).isBefore(dayjs())
+        const isExpiringSoon = diff <= 3 && diff >= 0
         return (
-          <span style={{ color: isExpiringSoon ? '#faad14' : 'inherit' }}>
+          <span style={{ color: isExpired ? '#999' : isExpiringSoon ? '#faad14' : 'inherit' }}>
             {date}
-            {isExpiringSoon && <Tag color="orange" style={{ marginLeft: 8 }}>即将过期</Tag>}
+            {isExpired && <Tag color="default" style={{ marginLeft: 8 }}>已过期</Tag>}
+            {!isExpired && isExpiringSoon && <Tag color="orange" style={{ marginLeft: 8 }}>即将过期</Tag>}
           </span>
         )
       }
     },
     {
-      title: '备注',
-      dataIndex: 'notes',
-      key: 'notes',
-      ellipsis: true
-    },
-    {
       title: '操作',
       key: 'action',
-      width: 200,
+      width: 280,
       fixed: 'right',
       render: (_, record) => (
-        <Space size="small">
-          <Button type="link" size="small" icon={<EyeOutlined />}>查看</Button>
+        <Space size="small" wrap>
+          <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(record)}>详情</Button>
+          <Button type="link" size="small" icon={<ImportOutlined />} onClick={() => handleStockIn(record)}>入库</Button>
+          <Button type="link" size="small" icon={<PlusOutlined />} onClick={() => handleAddBatch(record)}>批次</Button>
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
           <Popconfirm
             title="确定删除此药剂？"
@@ -147,6 +185,99 @@ const PesticideInventory: React.FC = () => {
           </Popconfirm>
         </Space>
       )
+    }
+  ]
+
+  const logColumns: ColumnsType<InventoryLog> = [
+    {
+      title: '日期',
+      dataIndex: 'date',
+      key: 'date',
+      width: 120
+    },
+    {
+      title: '类型',
+      dataIndex: 'type',
+      key: 'type',
+      width: 80,
+      render: (type: string) => (
+        <Tag color={type === 'in' ? 'green' : 'orange'}>
+          {type === 'in' ? '入库' : '出库'}
+        </Tag>
+      )
+    },
+    {
+      title: '药剂名称',
+      dataIndex: 'pesticideName',
+      key: 'pesticideName',
+      width: 150
+    },
+    {
+      title: '数量',
+      dataIndex: 'quantity',
+      key: 'quantity',
+      width: 100,
+      render: (val, record) => `${val} ${record.unit}`
+    },
+    {
+      title: '操作人员',
+      dataIndex: 'operator',
+      key: 'operator',
+      width: 100
+    },
+    {
+      title: '关联工单',
+      dataIndex: 'workOrderCode',
+      key: 'workOrderCode',
+      width: 150,
+      render: (code) => code || '-'
+    },
+    {
+      title: '备注',
+      dataIndex: 'remark',
+      key: 'remark',
+      ellipsis: true
+    }
+  ]
+
+  const batchColumns: ColumnsType<PesticideBatch> = [
+    {
+      title: '批次号',
+      dataIndex: 'batchNo',
+      key: 'batchNo',
+      width: 150
+    },
+    {
+      title: '数量',
+      dataIndex: 'quantity',
+      key: 'quantity',
+      width: 100,
+      render: (val, record) => `${val} ${record.unit}`
+    },
+    {
+      title: '采购日期',
+      dataIndex: 'purchaseDate',
+      key: 'purchaseDate',
+      width: 120
+    },
+    {
+      title: '有效期至',
+      dataIndex: 'expiryDate',
+      key: 'expiryDate',
+      width: 120,
+      render: (date: string) => {
+        const isExpiringSoon = dayjs(date).diff(dayjs(), 'month') <= 3
+        return (
+          <span style={{ color: isExpiringSoon ? '#faad14' : 'inherit' }}>
+            {date}
+          </span>
+        )
+      }
+    },
+    {
+      title: '供应商',
+      dataIndex: 'supplier',
+      key: 'supplier'
     }
   ]
 
@@ -178,6 +309,13 @@ const PesticideInventory: React.FC = () => {
       render: (val) => `${val} 亩`
     },
     {
+      title: '关联工单',
+      dataIndex: 'workOrderCode',
+      key: 'workOrderCode',
+      width: 150,
+      render: (code) => code || '-'
+    },
+    {
       title: '使用地点',
       dataIndex: 'location',
       key: 'location'
@@ -189,6 +327,11 @@ const PesticideInventory: React.FC = () => {
       width: 100
     }
   ]
+
+  const handleViewDetail = (record: Pesticide) => {
+    setViewingPesticide(record)
+    setViewDetailVisible(true)
+  }
 
   const handleEdit = (record: Pesticide) => {
     setEditingPesticide(record)
@@ -204,6 +347,28 @@ const PesticideInventory: React.FC = () => {
     setEditingPesticide(null)
     form.resetFields()
     setModalVisible(true)
+  }
+
+  const handleAddBatch = (record: Pesticide) => {
+    setSelectedPesticideForBatch(record)
+    batchForm.resetFields()
+    batchForm.setFieldsValue({
+      batchNo: generateBatchNo(),
+      purchaseDate: dayjs(),
+      expiryDate: dayjs().add(2, 'year')
+    })
+    setBatchModalVisible(true)
+  }
+
+  const handleStockIn = (record: Pesticide) => {
+    setSelectedPesticideForBatch(record)
+    stockInForm.resetFields()
+    stockInForm.setFieldsValue({
+      date: dayjs(),
+      pesticideId: record.id,
+      pesticideName: record.name
+    })
+    setStockInModalVisible(true)
   }
 
   const handleDelete = (id: string) => {
@@ -225,14 +390,117 @@ const PesticideInventory: React.FC = () => {
         )
         message.success('药剂信息更新成功')
       } else {
+        const initialBatch: PesticideBatch = {
+          id: uuidv4(),
+          pesticideId: '',
+          batchNo: generateBatchNo(),
+          quantity: formattedValues.stock,
+          unit: formattedValues.unit,
+          purchaseDate: formattedValues.purchaseDate,
+          expiryDate: formattedValues.expiryDate
+        }
         const newPesticide: Pesticide = {
           id: uuidv4(),
-          ...formattedValues
+          ...formattedValues,
+          batches: [initialBatch]
         }
+        initialBatch.pesticideId = newPesticide.id
         setPesticides(prev => [...prev, newPesticide])
+        
+        const log: InventoryLog = {
+          id: uuidv4(),
+          type: 'in',
+          pesticideId: newPesticide.id,
+          pesticideName: newPesticide.name,
+          batchId: initialBatch.id,
+          quantity: newPesticide.stock,
+          unit: newPesticide.unit,
+          operator: '系统',
+          date: dayjs().format('YYYY-MM-DD'),
+          remark: '初始入库'
+        }
+        setInventoryLogs(prev => [...prev, log])
         message.success('药剂入库成功')
       }
       setModalVisible(false)
+    })
+  }
+
+  const handleBatchSubmit = () => {
+    batchForm.validateFields().then(values => {
+      if (!selectedPesticideForBatch) return
+      
+      const newBatch: PesticideBatch = {
+        id: uuidv4(),
+        pesticideId: selectedPesticideForBatch.id,
+        batchNo: values.batchNo,
+        quantity: values.quantity,
+        unit: selectedPesticideForBatch.unit,
+        purchaseDate: values.purchaseDate.format('YYYY-MM-DD'),
+        expiryDate: values.expiryDate.format('YYYY-MM-DD'),
+        supplier: values.supplier,
+        price: values.price
+      }
+
+      setPesticides(prev =>
+        prev.map(p =>
+          p.id === selectedPesticideForBatch.id
+            ? {
+                ...p,
+                batches: [...(p.batches || []), newBatch],
+                stock: p.stock + values.quantity,
+                expiryDate: dayjs(p.expiryDate).isBefore(values.expiryDate.format('YYYY-MM-DD')) 
+                  ? values.expiryDate.format('YYYY-MM-DD') 
+                  : p.expiryDate
+              }
+            : p
+        )
+      )
+
+      const log: InventoryLog = {
+        id: uuidv4(),
+        type: 'in',
+        pesticideId: selectedPesticideForBatch.id,
+        pesticideName: selectedPesticideForBatch.name,
+        batchId: newBatch.id,
+        quantity: values.quantity,
+        unit: selectedPesticideForBatch.unit,
+        operator: values.operator || '管理员',
+        date: dayjs().format('YYYY-MM-DD'),
+        remark: `批次入库：${values.batchNo}`
+      }
+      setInventoryLogs(prev => [...prev, log])
+      message.success('批次添加成功')
+      setBatchModalVisible(false)
+    })
+  }
+
+  const handleStockInSubmit = () => {
+    stockInForm.validateFields().then(values => {
+      if (!selectedPesticideForBatch) return
+
+      setPesticides(prev =>
+        prev.map(p =>
+          p.id === selectedPesticideForBatch.id
+            ? { ...p, stock: p.stock + values.quantity }
+            : p
+        )
+      )
+
+      const log: InventoryLog = {
+        id: uuidv4(),
+        type: 'in',
+        pesticideId: selectedPesticideForBatch.id,
+        pesticideName: selectedPesticideForBatch.name,
+        quantity: values.quantity,
+        unit: selectedPesticideForBatch.unit,
+        operator: values.operator || '管理员',
+        date: values.date.format('YYYY-MM-DD'),
+        remark: values.remark
+      }
+      setInventoryLogs(prev => [...prev, log])
+      message.success('入库成功')
+      setStockInModalVisible(false)
     })
   }
 
@@ -244,10 +512,14 @@ const PesticideInventory: React.FC = () => {
         return
       }
 
+      const workOrder = workOrders.find(w => w.id === values.workOrderId)
+      
       const newUsage = {
         id: uuidv4(),
         ...values,
         pesticideName: pesticide?.name || '',
+        unit: pesticide?.unit || '',
+        workOrderCode: workOrder?.code || '',
         usageDate: values.usageDate.format('YYYY-MM-DD')
       }
 
@@ -259,6 +531,21 @@ const PesticideInventory: React.FC = () => {
             : p
         )
       )
+
+      const log: InventoryLog = {
+        id: uuidv4(),
+        type: 'out',
+        pesticideId: values.pesticideId,
+        pesticideName: pesticide?.name || '',
+        quantity: values.quantity,
+        unit: pesticide?.unit || '',
+        operator: values.operator,
+        date: values.usageDate.format('YYYY-MM-DD'),
+        workOrderId: values.workOrderId,
+        workOrderCode: workOrder?.code || '',
+        remark: values.remark || `防治面积：${values.area}亩`
+      }
+      setInventoryLogs(prev => [...prev, log])
       message.success('使用记录已登记')
       setUsageModalVisible(false)
       usageForm.resetFields()
@@ -267,15 +554,17 @@ const PesticideInventory: React.FC = () => {
 
   const handleExport = () => {
     const csvContent = [
-      ['药剂名称', '规格', '生产厂家', '库存数量', '单位', '采购日期', '有效期至'].join(','),
+      ['药剂名称', '规格', '生产厂家', '库存数量', '单位', '预警库存', '采购日期', '有效期至', '批次数量'].join(','),
       ...pesticides.map(p => [
         p.name,
         p.specification,
         p.manufacturer,
         p.stock,
         p.unit,
+        p.warningStock,
         p.purchaseDate,
-        p.expiryDate
+        p.expiryDate,
+        p.batches?.length || 0
       ].join(','))
     ].join('\n')
 
@@ -290,10 +579,10 @@ const PesticideInventory: React.FC = () => {
 
   return (
     <div>
-      {(lowStockCount > 0 || expiredSoonCount > 0) && (
+      {(lowStockCount > 0 || expiredSoonCount > 0 || expiredCount > 0) && (
         <Row gutter={16} style={{ marginBottom: 16 }}>
           {lowStockCount > 0 && (
-            <Col xs={24} md={12}>
+            <Col xs={24} md={8}>
               <Alert
                 message={`有 ${lowStockCount} 种药剂库存不足，请及时采购`}
                 type="warning"
@@ -303,10 +592,20 @@ const PesticideInventory: React.FC = () => {
             </Col>
           )}
           {expiredSoonCount > 0 && (
-            <Col xs={24} md={12}>
+            <Col xs={24} md={8}>
               <Alert
                 message={`有 ${expiredSoonCount} 种药剂即将过期`}
                 type="warning"
+                showIcon
+                icon={<WarningOutlined />}
+              />
+            </Col>
+          )}
+          {expiredCount > 0 && (
+            <Col xs={24} md={8}>
+              <Alert
+                message={`有 ${expiredCount} 种药剂已过期，请及时处理`}
+                type="error"
                 showIcon
                 icon={<WarningOutlined />}
               />
@@ -316,7 +615,7 @@ const PesticideInventory: React.FC = () => {
       )}
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col xs={24} sm={12} md={6}>
+        <Col xs={24} sm={12} md={4}>
           <Card>
             <Statistic
               title="药剂种类"
@@ -326,7 +625,7 @@ const PesticideInventory: React.FC = () => {
             />
           </Card>
         </Col>
-        <Col xs={24} sm={12} md={6}>
+        <Col xs={24} sm={12} md={4}>
           <Card>
             <Statistic
               title="总库存量"
@@ -336,7 +635,26 @@ const PesticideInventory: React.FC = () => {
             />
           </Card>
         </Col>
-        <Col xs={24} sm={12} md={6}>
+        <Col xs={24} sm={12} md={4}>
+          <Card>
+            <Statistic
+              title="库存不足"
+              value={lowStockCount}
+              valueStyle={{ color: '#faad14' }}
+              prefix={<WarningOutlined />}
+            />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={4}>
+          <Card>
+            <Statistic
+              title="即将过期"
+              value={expiredSoonCount}
+              valueStyle={{ color: '#faad14' }}
+            />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={4}>
           <Card>
             <Statistic
               title="累计使用量"
@@ -346,7 +664,7 @@ const PesticideInventory: React.FC = () => {
             />
           </Card>
         </Col>
-        <Col xs={24} sm={12} md={6}>
+        <Col xs={24} sm={12} md={4}>
           <Card>
             <Statistic
               title="累计防治面积"
@@ -358,67 +676,127 @@ const PesticideInventory: React.FC = () => {
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} md={16}>
-          <Card
-            title="药剂库存"
-            extra={
-              <Space>
-                <Button icon={<ExportOutlined />} onClick={handleExport}>导出</Button>
-                <Button icon={<PlusOutlined />} onClick={() => setUsageModalVisible(true)}>登记使用</Button>
-                <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
-                  入库登记
-                </Button>
-              </Space>
-            }
-          >
+      <Card>
+        <Tabs activeKey={activeTab} onChange={setActiveTab}>
+          <TabPane tab="药剂库存" key="inventory">
+            <Row gutter={[16, 16]}>
+              <Col xs={24} md={16}>
+                <Card
+                  title="药剂列表"
+                  extra={
+                    <Space>
+                      <Button icon={<ExportOutlined />} onClick={handleExport}>导出</Button>
+                      <Button icon={<ImportOutlined />} onClick={() => setUsageModalVisible(true)}>登记使用</Button>
+                      <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+                        新增药剂
+                      </Button>
+                    </Space>
+                  }
+                >
+                  <Table
+                    columns={columns}
+                    dataSource={pesticides}
+                    rowKey="id"
+                    scroll={{ x: 1400 }}
+                    pagination={{ pageSize: 10 }}
+                  />
+                </Card>
+              </Col>
+              <Col xs={24} md={8}>
+                <Card 
+                  title="采购建议" 
+                  extra={<ShoppingCartOutlined style={{ color: '#faad14' }} />}
+                  style={{ marginBottom: 16 }}
+                >
+                  {purchaseSuggestions.length > 0 ? (
+                    <List
+                      dataSource={purchaseSuggestions}
+                      renderItem={item => (
+                        <List.Item>
+                          <List.Item.Meta
+                            avatar={<Tag color="red">缺</Tag>}
+                            title={item.name}
+                            description={
+                              <div>
+                                <div>当前库存：{item.stock} {item.unit}（预警：{item.warningStock}）</div>
+                                <div style={{ color: '#52c41a' }}>建议采购：{item.suggestQuantity} {item.unit}</div>
+                              </div>
+                            }
+                          />
+                        </List.Item>
+                      )}
+                    />
+                  ) : (
+                    <div style={{ textAlign: 'center', color: '#999', padding: '20px 0' }}>
+                      暂无采购建议
+                    </div>
+                  )}
+                </Card>
+
+                <Card title="库存预警">
+                  <List
+                    dataSource={pesticides.filter(p => 
+                      p.stock < p.warningStock || 
+                      dayjs(p.expiryDate).diff(dayjs(), 'month') <= 3
+                    )}
+                    renderItem={item => {
+                      const isLow = item.stock < item.warningStock
+                      const isExpiring = dayjs(item.expiryDate).diff(dayjs(), 'month') <= 3
+                      return (
+                        <List.Item>
+                          <List.Item.Meta
+                            avatar={
+                              <Tag color={isLow ? 'red' : 'orange'}>
+                                {isLow ? '缺' : '警'}
+                              </Tag>
+                            }
+                            title={item.name}
+                            description={
+                              <div>
+                                {isLow && <div>库存：{item.stock} {item.unit}（预警：{item.warningStock}）</div>}
+                                {isExpiring && <div>有效期至：{item.expiryDate}</div>}
+                              </div>
+                            }
+                          />
+                        </List.Item>
+                      )
+                    }}
+                  />
+                </Card>
+              </Col>
+            </Row>
+          </TabPane>
+
+          <TabPane tab="出入库流水" key="logs">
+            <Card
+              extra={
+                <Space>
+                  <Button icon={<ExportOutlined />}>导出流水</Button>
+                </Space>
+              }
+            >
+              <Table
+                columns={logColumns}
+                dataSource={inventoryLogs}
+                rowKey="id"
+                pagination={{ pageSize: 10, showSizeChanger: true }}
+              />
+            </Card>
+          </TabPane>
+
+          <TabPane tab="使用记录" key="usage">
             <Table
-              columns={columns}
-              dataSource={pesticides}
+              columns={usageColumns}
+              dataSource={pesticideUsages}
               rowKey="id"
-              scroll={{ x: 1200 }}
               pagination={{ pageSize: 10 }}
             />
-          </Card>
-        </Col>
-        <Col xs={24} md={8}>
-          <Card title="库存预警">
-            <List
-              dataSource={pesticides.filter(p => p.stock < p.warningStock || dayjs(p.expiryDate).diff(dayjs(), 'month') <= 3)}
-              renderItem={item => (
-                <List.Item>
-                  <List.Item.Meta
-                    avatar={
-                      <Tag color={item.stock < item.warningStock ? 'red' : 'orange'}>
-                        {item.stock < item.warningStock ? '缺' : '警'}
-                      </Tag>
-                    }
-                    title={item.name}
-                    description={
-                      <div>
-                        <div>库存：{item.stock} {item.unit}（预警：{item.warningStock}）</div>
-                        <div>有效期至：{item.expiryDate}</div>
-                      </div>
-                    }
-                  />
-                </List.Item>
-              )}
-            />
-          </Card>
-        </Col>
-      </Row>
-
-      <Card title="使用记录" style={{ marginTop: 16 }}>
-        <Table
-          columns={usageColumns}
-          dataSource={pesticideUsages}
-          rowKey="id"
-          pagination={{ pageSize: 10 }}
-        />
+          </TabPane>
+        </Tabs>
       </Card>
 
       <Modal
-        title={editingPesticide ? '编辑药剂信息' : '药剂入库登记'}
+        title={editingPesticide ? '编辑药剂信息' : '新增药剂'}
         open={modalVisible}
         onOk={handleSubmit}
         onCancel={() => setModalVisible(false)}
@@ -514,11 +892,108 @@ const PesticideInventory: React.FC = () => {
       </Modal>
 
       <Modal
+        title="添加批次"
+        open={batchModalVisible}
+        onOk={handleBatchSubmit}
+        onCancel={() => setBatchModalVisible(false)}
+        width={500}
+      >
+        <Form form={batchForm} layout="vertical">
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="batchNo"
+                label="批次号"
+                rules={[{ required: true, message: '请输入批次号' }]}
+              >
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="quantity"
+                label="数量"
+                rules={[{ required: true, message: '请输入数量' }]}
+              >
+                <InputNumber min={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="purchaseDate"
+                label="采购日期"
+                rules={[{ required: true, message: '请选择' }]}
+              >
+                <DatePicker style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="expiryDate"
+                label="有效期至"
+                rules={[{ required: true, message: '请选择' }]}
+              >
+                <DatePicker style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="supplier" label="供应商">
+            <Input placeholder="请输入供应商" />
+          </Form.Item>
+          <Form.Item name="operator" label="操作人员">
+            <Input placeholder="请输入操作人员姓名" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="快速入库"
+        open={stockInModalVisible}
+        onOk={handleStockInSubmit}
+        onCancel={() => setStockInModalVisible(false)}
+        width={500}
+      >
+        <Form form={stockInForm} layout="vertical">
+          <Form.Item name="pesticideName" label="药剂名称">
+            <Input disabled />
+          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="quantity"
+                label="入库数量"
+                rules={[{ required: true, message: '请输入数量' }]}
+              >
+                <InputNumber min={0} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="date"
+                label="入库日期"
+                rules={[{ required: true, message: '请选择' }]}
+              >
+                <DatePicker style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="operator" label="操作人员">
+            <Input placeholder="请输入操作人员姓名" />
+          </Form.Item>
+          <Form.Item name="remark" label="备注">
+            <TextArea rows={2} placeholder="请输入备注" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
         title="登记药剂使用"
         open={usageModalVisible}
         onOk={handleUsageSubmit}
         onCancel={() => setUsageModalVisible(false)}
-        width={500}
+        width={600}
       >
         <Form form={usageForm} layout="vertical">
           <Form.Item
@@ -591,7 +1066,48 @@ const PesticideInventory: React.FC = () => {
               ))}
             </Select>
           </Form.Item>
+          <Form.Item name="remark" label="备注">
+            <TextArea rows={2} placeholder="请输入备注" />
+          </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title="药剂详情"
+        open={viewDetailVisible}
+        onCancel={() => setViewDetailVisible(false)}
+        footer={[
+          <Button key="close" onClick={() => setViewDetailVisible(false)}>关闭</Button>
+        ]}
+        width={800}
+      >
+        {viewingPesticide && (
+          <div>
+            <Descriptions bordered column={2} style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="药剂名称" span={2}>{viewingPesticide.name}</Descriptions.Item>
+              <Descriptions.Item label="规格">{viewingPesticide.specification}</Descriptions.Item>
+              <Descriptions.Item label="生产厂家">{viewingPesticide.manufacturer}</Descriptions.Item>
+              <Descriptions.Item label="当前库存">
+                <span style={{ color: viewingPesticide.stock < viewingPesticide.warningStock ? '#ff4d4f' : 'inherit', fontWeight: 600 }}>
+                  {viewingPesticide.stock} {viewingPesticide.unit}
+                </span>
+              </Descriptions.Item>
+              <Descriptions.Item label="预警库存">{viewingPesticide.warningStock} {viewingPesticide.unit}</Descriptions.Item>
+              <Descriptions.Item label="采购日期">{viewingPesticide.purchaseDate}</Descriptions.Item>
+              <Descriptions.Item label="有效期至">{viewingPesticide.expiryDate}</Descriptions.Item>
+              <Descriptions.Item label="备注" span={2}>{viewingPesticide.notes || '-'}</Descriptions.Item>
+            </Descriptions>
+
+            <Divider orientation="left">批次信息</Divider>
+            <Table
+              columns={batchColumns}
+              dataSource={viewingPesticide.batches || []}
+              rowKey="id"
+              pagination={false}
+              size="small"
+            />
+          </div>
+        )}
       </Modal>
     </div>
   )

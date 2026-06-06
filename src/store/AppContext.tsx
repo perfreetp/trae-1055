@@ -8,7 +8,10 @@ import {
   PesticideUsage,
   PublicReport,
   EvaluationRecord,
-  HistoricalCase
+  HistoricalCase,
+  PesticideBatch,
+  InventoryLog,
+  MonthlyReport
 } from '../types'
 import {
   mockMonitoringPoints,
@@ -19,7 +22,9 @@ import {
   mockPesticideUsages,
   mockPublicReports,
   mockEvaluationRecords,
-  mockHistoricalCases
+  mockHistoricalCases,
+  mockInventoryLogs,
+  mockMonthlyReports
 } from '../data/mockData'
 
 interface AppContextType {
@@ -41,6 +46,10 @@ interface AppContextType {
   setEvaluationRecords: React.Dispatch<React.SetStateAction<EvaluationRecord[]>>
   historicalCases: HistoricalCase[]
   setHistoricalCases: React.Dispatch<React.SetStateAction<HistoricalCase[]>>
+  inventoryLogs: InventoryLog[]
+  setInventoryLogs: React.Dispatch<React.SetStateAction<InventoryLog[]>>
+  monthlyReports: MonthlyReport[]
+  setMonthlyReports: React.Dispatch<React.SetStateAction<MonthlyReport[]>>
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined)
@@ -55,9 +64,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [publicReports, setPublicReports] = useState<PublicReport[]>(mockPublicReports)
   const [evaluationRecords, setEvaluationRecords] = useState<EvaluationRecord[]>(mockEvaluationRecords)
   const [historicalCases, setHistoricalCases] = useState<HistoricalCase[]>(mockHistoricalCases)
+  const [inventoryLogs, setInventoryLogs] = useState<InventoryLog[]>(mockInventoryLogs)
+  const [monthlyReports, setMonthlyReports] = useState<MonthlyReport[]>(mockMonthlyReports)
 
   useEffect(() => {
-    const saved = localStorage.getItem('forestPestData')
+    const saved = localStorage.getItem('forestPestData_v2')
     if (saved) {
       try {
         const data = JSON.parse(saved)
@@ -70,6 +81,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (data.publicReports) setPublicReports(data.publicReports)
         if (data.evaluationRecords) setEvaluationRecords(data.evaluationRecords)
         if (data.historicalCases) setHistoricalCases(data.historicalCases)
+        if (data.inventoryLogs) setInventoryLogs(data.inventoryLogs)
+        if (data.monthlyReports) setMonthlyReports(data.monthlyReports)
       } catch (e) {
         console.error('Failed to load saved data:', e)
       }
@@ -86,10 +99,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       pesticideUsages,
       publicReports,
       evaluationRecords,
-      historicalCases
+      historicalCases,
+      inventoryLogs,
+      monthlyReports
     }
-    localStorage.setItem('forestPestData', JSON.stringify(data))
-  }, [monitoringPoints, traps, samples, workOrders, pesticides, pesticideUsages, publicReports, evaluationRecords, historicalCases])
+    localStorage.setItem('forestPestData_v2', JSON.stringify(data))
+  }, [monitoringPoints, traps, samples, workOrders, pesticides, pesticideUsages, publicReports, evaluationRecords, historicalCases, inventoryLogs, monthlyReports])
 
   return (
     <AppContext.Provider
@@ -111,7 +126,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         evaluationRecords,
         setEvaluationRecords,
         historicalCases,
-        setHistoricalCases
+        setHistoricalCases,
+        inventoryLogs,
+        setInventoryLogs,
+        monthlyReports,
+        setMonthlyReports
       }}
     >
       {children}

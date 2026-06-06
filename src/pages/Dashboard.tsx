@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import {
   Row,
   Col,
@@ -16,7 +16,8 @@ import {
   Statistic,
   List,
   Avatar,
-  message
+  message,
+  Alert
 } from 'antd'
 import {
   EnvironmentOutlined,
@@ -34,6 +35,7 @@ import dayjs from 'dayjs'
 import { v4 as uuidv4 } from 'uuid'
 import { useApp } from '../store/AppContext'
 import { MonitoringPoint, PestType, HazardLevel } from '../types'
+import { isOverdue, getWorkOrderDisplayStatus } from '../utils'
 
 const { Option } = Select
 const { TextArea } = Input
@@ -53,9 +55,18 @@ const Dashboard: React.FC = () => {
 
   const totalPoints = monitoringPoints.length
   const abnormalPoints = monitoringPoints.filter(p => p.status === '异常').length
-  const pendingOrders = workOrders.filter(w => w.status === '待处理' || w.status === '已超期').length
+  
+  const overdueOrders = useMemo(() => 
+    workOrders.filter(w => isOverdue(w.deadline, w.status)),
+    [workOrders]
+  )
+  
+  const pendingOrders = useMemo(() => 
+    workOrders.filter(w => w.status === '待处理' || w.status === '处理中'),
+    [workOrders]
+  )
+  
   const totalPestCount = monitoringPoints.reduce((sum, p) => sum + p.pestCount, 0)
-  const overdueOrders = workOrders.filter(w => w.status === '已超期').length
 
   const columns: ColumnsType<MonitoringPoint> = [
     {
@@ -134,10 +145,11 @@ const Dashboard: React.FC = () => {
       key: 'nextCheckDate',
       width: 120,
       render: (date: string) => {
-        const isOverdue = dayjs(date).isBefore(dayjs())
+        const isOverdueDate = dayjs(date).isBefore(dayjs())
         return (
-          <span style={{ color: isOverdue ? '#ff4d4f' : 'inherit' }}>
+          <span style={{ color: isOverdueDate ? '#ff4d4f' : 'inherit' }}>
             {date}
+            {isOverdueDate && <Tag color="red" style={{ marginLeft: 4 }}>超期</Tag>}
           </span>
         )
       }
@@ -265,13 +277,13 @@ const Dashboard: React.FC = () => {
       icon: <BugOutlined />,
       color: 'orange'
     },
-    {
+    ...(overdueOrders.length > 0 ? [{
       title: '工单超期提醒',
-      desc: 'WO-2026-003 已超期，请及时处理',
+      desc: `${overdueOrders.length} 个工单已超期，请及时处理`,
       time: '3小时前',
       icon: <WarningOutlined />,
       color: 'red'
-    },
+    }] : []),
     {
       title: '诱捕器维护',
       desc: 'TRAP-2026-004 损坏，已登记待更换',
@@ -283,6 +295,21 @@ const Dashboard: React.FC = () => {
 
   return (
     <div>
+      {overdueOrders.length > 0 && (
+        <Alert
+          message={`有 ${overdueOrders.length} 个工单已超期，请及时处理`}
+          type="warning"
+          showIcon
+          icon={<WarningOutlined />}
+          style={{ marginBottom: 16 }}
+          action={
+            <Button size="small" type="default" onClick={() => window.location.hash = '#/workorders'}>
+              查看
+            </Button>
+          }
+        />
+      )}
+
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} md={6}>
           <Card>
@@ -308,10 +335,10 @@ const Dashboard: React.FC = () => {
           <Card>
             <Statistic
               title="待处理工单"
-              value={pendingOrders}
+              value={pendingOrders.length}
               prefix={<ClockCircleOutlined />}
               valueStyle={{ color: '#faad14' }}
-              suffix={overdueOrders > 0 ? <Tag color="red">{overdueOrders}个超期</Tag> : undefined}
+              suffix={overdueOrders.length > 0 ? <Tag color="red">{overdueOrders.length}个超期</Tag> : undefined}
             />
           </Card>
         </Col>

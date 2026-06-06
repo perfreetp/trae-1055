@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo, useRef } from 'react'
 import {
   Card,
   Table,
@@ -20,7 +20,8 @@ import {
   Avatar,
   Descriptions,
   Upload,
-  Divider
+  Divider,
+  Empty
 } from 'antd'
 import {
   BarChartOutlined,
@@ -30,14 +31,16 @@ import {
   PlusOutlined,
   EyeOutlined,
   CheckCircleOutlined,
-  CloseCircleOutlined
+  CloseCircleOutlined,
+  CalendarOutlined,
+  PrinterOutlined
 } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 import { v4 as uuidv4 } from 'uuid'
 import { useApp } from '../store/AppContext'
-import { PublicReport, HistoricalCase, EvaluationRecord, PestType } from '../types'
+import { PublicReport, HistoricalCase, EvaluationRecord, PestType, MonthlyReport } from '../types'
 
 const { Option } = Select
 const { TextArea } = Input
@@ -50,21 +53,77 @@ const Evaluation: React.FC = () => {
     publicReports,
     setPublicReports,
     workOrders,
-    pesticideUsages
+    pesticideUsages,
+    samples,
+    monthlyReports,
+    setMonthlyReports
   } = useApp()
 
   const [reportModalVisible, setReportModalVisible] = useState(false)
   const [handleModalVisible, setHandleModalVisible] = useState(false)
   const [viewingReport, setViewingReport] = useState<PublicReport | null>(null)
+  const [viewingMonthlyReport, setViewingMonthlyReport] = useState<MonthlyReport | null>(null)
+  const [viewReportModalVisible, setViewReportModalVisible] = useState(false)
   const [activeTab, setActiveTab] = useState('overview')
   const [reportForm] = Form.useForm()
   const [handleForm] = Form.useForm()
   const [reportPhotos, setReportPhotos] = useState<string[]>([])
+  const [selectedMonth, setSelectedMonth] = useState<number>(dayjs().month() + 1)
+  const [selectedYear, setSelectedYear] = useState<number>(dayjs().year())
+  const printRef = useRef<HTMLDivElement>(null)
 
   const totalCases = historicalCases.length
   const totalReports = publicReports.length
   const pendingReports = publicReports.filter(r => r.status === '待核实').length
   const totalArea = workOrders.filter(w => w.status === '已完成').reduce((sum, w) => sum + w.area, 0)
+
+  const monthlyStats = useMemo(() => {
+    const monthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`
+    const monthStart = dayjs(monthStr + '-01')
+    const monthEnd = monthStart.endOf('month')
+
+    const isInMonth = (dateStr: string) => {
+      const date = dayjs(dateStr)
+      return date.isAfter(monthStart.subtract(1, 'day')) && date.isBefore(monthEnd.add(1, 'day'))
+    }
+
+    const newSamples = samples.filter(s => isInMonth(s.collectDate)).length
+    const newReports = publicReports.filter(r => isInMonth(r.reportDate)).length
+    const completedOrders = workOrders.filter(w => 
+      w.status === '已完成' && w.reviewDate && isInMonth(w.reviewDate)
+    ).length
+    const totalWood = workOrders
+      .filter(w => w.status === '已完成' && w.reviewDate && isInMonth(w.reviewDate))
+      .reduce((sum, w) => sum + w.woodCount, 0)
+    const disposalArea = workOrders
+      .filter(w => w.status === '已完成' && w.reviewDate && isInMonth(w.reviewDate))
+      .reduce((sum, w) => sum + w.area, 0)
+    const pesticideUsage = pesticideUsages
+      .filter(u => isInMonth(u.usageDate))
+      .reduce((sum, u) => sum + u.quantity, 0)
+
+    const currentRecord = evaluationRecords.find(r => r.year === selectedYear && r.month === selectedMonth)
+    const lastYearRecord = evaluationRecords.find(r => r.year === selectedYear - 1 && r.month === selectedMonth)
+    
+    const avgDensity = currentRecord?.avgDensity || 0
+    const lastYearAvgDensity = lastYearRecord?.avgDensity || avgDensity
+    const densityChange = lastYearAvgDensity > 0 
+      ? ((avgDensity - lastYearAvgDensity) / lastYearAvgDensity * 100).toFixed(1)
+      : '0'
+
+    return {
+      newSamples,
+      newReports,
+      completedOrders,
+      totalWood,
+      disposalArea,
+      pesticideUsage,
+      avgDensity,
+      lastYearAvgDensity,
+      densityChange,
+      monthStr
+    }
+  }, [selectedYear, selectedMonth, samples, publicReports, workOrders, pesticideUsages, evaluationRecords])
 
   const densityCompareOption = {
     tooltip: { trigger: 'axis' },
@@ -135,6 +194,38 @@ const Evaluation: React.FC = () => {
           { value: 5, name: '其他' }
         ],
         color: ['#f5222d', '#faad14', '#1890ff', '#52c41a']
+      }
+    ]
+  }
+
+  const monthlyDensityChangeOption = {
+    tooltip: { 
+      trigger: 'axis',
+      formatter: (params: any) => {
+        const data = params[0]
+        const change = data.data
+        return `${data.name}<br/>同比变化: ${change > 0 ? '+' : ''}${change}%`
+      }
+    },
+    xAxis: {
+      type: 'category',
+      data: evaluationRecords.map(r => `${r.year}-${String(r.month).padStart(2, '0')}`)
+    },
+    yAxis: { 
+      type: 'value', 
+      name: '同比变化(%)',
+      axisLabel: { formatter: '{value}%' }
+    },
+    series: [
+      {
+        type: 'bar',
+        data: evaluationRecords.map(r => {
+          if (r.lastYearAvgDensity === 0) return 0
+          return ((r.avgDensity - r.lastYearAvgDensity) / r.lastYearAvgDensity * 100).toFixed(1)
+        }),
+        itemStyle: {
+          color: (params: any) => params.data >= 0 ? '#f5222d' : '#52c41a'
+        }
       }
     ]
   }
@@ -286,6 +377,88 @@ const Evaluation: React.FC = () => {
     }
   ]
 
+  const monthlyReportColumns: ColumnsType<MonthlyReport> = [
+    {
+      title: '年月',
+      key: 'month',
+      width: 120,
+      render: (_, record) => `${record.year}年${record.month}月`
+    },
+    {
+      title: '新增样本',
+      dataIndex: 'newSamples',
+      key: 'newSamples',
+      width: 100
+    },
+    {
+      title: '群众上报',
+      dataIndex: 'publicReports',
+      key: 'publicReports',
+      width: 100
+    },
+    {
+      title: '完成工单',
+      dataIndex: 'completedOrders',
+      key: 'completedOrders',
+      width: 100
+    },
+    {
+      title: '清理疫木',
+      dataIndex: 'woodCount',
+      key: 'woodCount',
+      width: 100
+    },
+    {
+      title: '处置面积(亩)',
+      dataIndex: 'disposalArea',
+      key: 'disposalArea',
+      width: 120
+    },
+    {
+      title: '药剂使用',
+      dataIndex: 'pesticideUsage',
+      key: 'pesticideUsage',
+      width: 100
+    },
+    {
+      title: '平均密度',
+      dataIndex: 'avgDensity',
+      key: 'avgDensity',
+      width: 100
+    },
+    {
+      title: '同比变化',
+      key: 'change',
+      width: 100,
+      render: (_, record) => {
+        if (record.lastYearAvgDensity === 0) return '-'
+        const change = ((record.avgDensity - record.lastYearAvgDensity) / record.lastYearAvgDensity * 100).toFixed(1)
+        return (
+          <span style={{ color: Number(change) > 0 ? '#f5222d' : '#52c41a' }}>
+            {Number(change) > 0 ? '+' : ''}{change}%
+          </span>
+        )
+      }
+    },
+    {
+      title: '生成时间',
+      dataIndex: 'generatedDate',
+      key: 'generatedDate',
+      width: 150
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 150,
+      render: (_, record) => (
+        <Space size="small">
+          <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => handleViewMonthlyReport(record)}>查看</Button>
+          <Button type="link" size="small" icon={<PrinterOutlined />} onClick={() => handlePrintMonthlyReport(record)}>打印</Button>
+        </Space>
+      )
+    }
+  ]
+
   const handleViewReport = (record: PublicReport) => {
     setViewingReport(record)
     setReportModalVisible(true)
@@ -341,48 +514,209 @@ const Evaluation: React.FC = () => {
     })
   }
 
-  const handleExportMonthly = () => {
-    const monthData = evaluationRecords.find(r => r.year === 2026 && r.month === 5)
-    if (!monthData) {
-      message.error('无本月数据')
+  const handleViewMonthlyReport = (record: MonthlyReport) => {
+    setViewingMonthlyReport(record)
+    setViewReportModalVisible(true)
+  }
+
+  const handleGenerateMonthlyReport = () => {
+    const existing = monthlyReports.find(r => r.year === selectedYear && r.month === selectedMonth)
+    if (existing) {
+      message.warning('该月月报已存在')
       return
     }
 
+    const newReport: MonthlyReport = {
+      id: uuidv4(),
+      year: selectedYear,
+      month: selectedMonth,
+      newSamples: monthlyStats.newSamples,
+      publicReports: monthlyStats.newReports,
+      completedOrders: monthlyStats.completedOrders,
+      woodCount: monthlyStats.totalWood,
+      disposalArea: monthlyStats.disposalArea,
+      pesticideUsage: monthlyStats.pesticideUsage,
+      avgDensity: monthlyStats.avgDensity,
+      lastYearAvgDensity: monthlyStats.lastYearAvgDensity,
+      newMonitoringPoints: 0,
+      activeTraps: 0,
+      generatedDate: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+      generatedBy: '管理员'
+    }
+
+    setMonthlyReports(prev => [...prev, newReport])
+    message.success('月报生成成功')
+  }
+
+  const handleExportMonthly = () => {
+    const stats = monthlyStats
+    const densityChangeText = Number(stats.densityChange) > 0 
+      ? `上升 ${stats.densityChange}%` 
+      : `下降 ${Math.abs(Number(stats.densityChange))}%`
+
     const content = `
 林业病虫害监测月报
-${monthData.year}年${monthData.month}月
+${selectedYear}年${selectedMonth}月
 
-一、监测概况
-- 监测点数量：${monthData.monitoringPointCount} 个
-- 诱捕器数量：${monthData.trapCount} 个
+一、总体概况
+- 报告周期：${selectedYear}年${selectedMonth}月
+- 生成时间：${dayjs().format('YYYY-MM-DD HH:mm:ss')}
 
-二、虫情监测
-- 病虫害类型：${monthData.pestType}
-- 虫口总数：${monthData.totalPestCount} 头
-- 平均虫口密度：${monthData.avgDensity}
-- 去年同期密度：${monthData.lastYearAvgDensity}
-- 同比变化：${((monthData.avgDensity - monthData.lastYearAvgDensity) / monthData.lastYearAvgDensity * 100).toFixed(1)}%
+二、监测数据
+- 本月新增样本：${stats.newSamples} 份
+- 本月群众上报：${stats.newReports} 起
+- 本月完成工单：${stats.completedOrders} 单
 
 三、处置情况
-- 处置面积：${monthData.disposalArea} 亩
-- 处置次数：${monthData.disposalCount} 次
-- 清理疫木：${monthData.woodCount} 株
-- 药剂使用：${monthData.pesticideUsage} 单位
+- 清理疫木数量：${stats.totalWood} 株
+- 累计处置面积：${stats.disposalArea} 亩
+- 药剂使用量：${stats.pesticideUsage} 单位
 
-四、群众举报
-- 本月收到举报：${publicReports.filter(r => r.reportDate.startsWith(`${monthData.year}-${String(monthData.month).padStart(2, '0')}`)).length} 起
-- 已处置：${publicReports.filter(r => r.status === '已处置').length} 起
+四、虫情分析
+- 本月平均虫口密度：${stats.avgDensity}
+- 去年同期密度：${stats.lastYearAvgDensity}
+- 同比变化：${densityChangeText}
 
-报告生成时间：${dayjs().format('YYYY-MM-DD HH:mm:ss')}
+五、工作总结
+[此处可填写本月工作总结]
+
+六、下月计划
+[此处可填写下月工作计划]
+
+报告生成单位：林业站
+报告生成人：管理员
     `.trim()
 
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `林业病虫害月报_${monthData.year}${String(monthData.month).padStart(2, '0')}.txt`
+    link.download = `林业病虫害月报_${selectedYear}${String(selectedMonth).padStart(2, '0')}.txt`
     link.click()
     message.success('月报导出成功')
+  }
+
+  const handlePrintMonthlyReport = (record: MonthlyReport) => {
+    const densityChange = record.lastYearAvgDensity > 0 
+      ? ((record.avgDensity - record.lastYearAvgDensity) / record.lastYearAvgDensity * 100).toFixed(1)
+      : '0'
+    const densityChangeText = Number(densityChange) > 0 
+      ? `上升 ${densityChange}%` 
+      : `下降 ${Math.abs(Number(densityChange))}%`
+
+    const printContent = `
+      <div style="font-family: 'Microsoft YaHei', sans-serif; padding: 40px; max-width: 800px; margin: 0 auto;">
+        <h1 style="text-align: center; font-size: 24px; margin-bottom: 10px;">林业病虫害监测月报</h1>
+        <h2 style="text-align: center; font-size: 18px; color: #666; margin-bottom: 30px;">${record.year}年${record.month}月</h2>
+        
+        <div style="margin-bottom: 20px;">
+          <h3 style="font-size: 16px; border-bottom: 2px solid #1890ff; padding-bottom: 5px; margin-bottom: 15px;">一、总体概况</h3>
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 10px;">
+            <tr>
+              <td style="padding: 8px; border: 1px solid #ddd; width: 30%; background: #f5f5f5;">报告周期</td>
+              <td style="padding: 8px; border: 1px solid #ddd;">${record.year}年${record.month}月</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border: 1px solid #ddd; background: #f5f5f5;">生成时间</td>
+              <td style="padding: 8px; border: 1px solid #ddd;">${record.generatedDate}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border: 1px solid #ddd; background: #f5f5f5;">生成人</td>
+              <td style="padding: 8px; border: 1px solid #ddd;">${record.generatedBy}</td>
+            </tr>
+          </table>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+          <h3 style="font-size: 16px; border-bottom: 2px solid #1890ff; padding-bottom: 5px; margin-bottom: 15px;">二、监测数据</h3>
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 8px; border: 1px solid #ddd; width: 30%; background: #f5f5f5;">本月新增样本</td>
+              <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">${record.newSamples} 份</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border: 1px solid #ddd; background: #f5f5f5;">本月群众上报</td>
+              <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">${record.publicReports} 起</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border: 1px solid #ddd; background: #f5f5f5;">本月完成工单</td>
+              <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">${record.completedOrders} 单</td>
+            </tr>
+          </table>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+          <h3 style="font-size: 16px; border-bottom: 2px solid #1890ff; padding-bottom: 5px; margin-bottom: 15px;">三、处置情况</h3>
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 8px; border: 1px solid #ddd; width: 30%; background: #f5f5f5;">清理疫木数量</td>
+              <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">${record.woodCount} 株</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border: 1px solid #ddd; background: #f5f5f5;">累计处置面积</td>
+              <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">${record.disposalArea} 亩</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border: 1px solid #ddd; background: #f5f5f5;">药剂使用量</td>
+              <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">${record.pesticideUsage} 单位</td>
+            </tr>
+          </table>
+        </div>
+
+        <div style="margin-bottom: 40px;">
+          <h3 style="font-size: 16px; border-bottom: 2px solid #1890ff; padding-bottom: 5px; margin-bottom: 15px;">四、虫情分析</h3>
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 8px; border: 1px solid #ddd; width: 30%; background: #f5f5f5;">本月平均虫口密度</td>
+              <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">${record.avgDensity}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border: 1px solid #ddd; background: #f5f5f5;">去年同期密度</td>
+              <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">${record.lastYearAvgDensity}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border: 1px solid #ddd; background: #f5f5f5;">同比变化</td>
+              <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; color: ${Number(densityChange) > 0 ? '#f5222d' : '#52c41a'};">${densityChangeText}</td>
+            </tr>
+          </table>
+        </div>
+
+        <div style="margin-top: 60px; display: flex; justify-content: space-between;">
+          <div style="text-align: center;">
+            <div style="border-top: 1px solid #000; width: 150px; padding-top: 5px; font-size: 12px;">报告人签字</div>
+          </div>
+          <div style="text-align: center;">
+            <div style="border-top: 1px solid #000; width: 150px; padding-top: 5px; font-size: 12px;">审核人签字</div>
+          </div>
+          <div style="text-align: center;">
+            <div style="border-top: 1px solid #000; width: 150px; padding-top: 5px; font-size: 12px;">单位盖章</div>
+          </div>
+        </div>
+      </div>
+    `
+
+    const printWindow = window.open('', '_blank')
+    if (printWindow) {
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>林业病虫害月报_${record.year}${String(record.month).padStart(2, '0')}</title>
+          <style>
+            @media print {
+              body { margin: 0; }
+            }
+          </style>
+        </head>
+        <body>${printContent}</body>
+        </html>
+      `)
+      printWindow.document.close()
+      printWindow.focus()
+      setTimeout(() => {
+        printWindow.print()
+      }, 500)
+    }
   }
 
   const getCurrentMonthStats = () => {
@@ -400,7 +734,7 @@ ${monthData.year}年${monthData.month}月
   return (
     <div>
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col xs={24} sm={12} md={6}>
+        <Col xs={24} sm={12} md={4}>
           <Card>
             <Statistic
               title="历史病例"
@@ -410,7 +744,7 @@ ${monthData.year}年${monthData.month}月
             />
           </Card>
         </Col>
-        <Col xs={24} sm={12} md={6}>
+        <Col xs={24} sm={12} md={4}>
           <Card>
             <Statistic
               title="群众举报"
@@ -421,7 +755,7 @@ ${monthData.year}年${monthData.month}月
             />
           </Card>
         </Col>
-        <Col xs={24} sm={12} md={6}>
+        <Col xs={24} sm={12} md={4}>
           <Card>
             <Statistic
               title="累计处置面积"
@@ -431,13 +765,33 @@ ${monthData.year}年${monthData.month}月
             />
           </Card>
         </Col>
-        <Col xs={24} sm={12} md={6}>
+        <Col xs={24} sm={12} md={4}>
           <Card>
             <Statistic
               title="本月完成工单"
               value={stats.completedOrders}
               prefix={<CheckCircleOutlined />}
               valueStyle={{ color: '#52c41a' }}
+            />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={4}>
+          <Card>
+            <Statistic
+              title="累计清理疫木"
+              value={stats.totalWood}
+              suffix="株"
+              valueStyle={{ color: '#faad14' }}
+            />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={4}>
+          <Card>
+            <Statistic
+              title="累计药剂使用"
+              value={stats.totalPesticide}
+              suffix="单位"
+              valueStyle={{ color: '#1890ff' }}
             />
           </Card>
         </Col>
@@ -465,45 +819,138 @@ ${monthData.year}年${monthData.month}月
                   <ReactECharts option={pestTypeStatsOption} style={{ height: 280 }} />
                 </Card>
               </Col>
-              <Col xs={24} md={16}>
-                <Card title="月度评估数据" extra={
-                  <Button icon={<ExportOutlined />} onClick={handleExportMonthly}>
-                    导出月报
-                  </Button>
-                }>
-                  <Table
-                    dataSource={evaluationRecords}
-                    rowKey="id"
-                    pagination={false}
-                    size="small"
-                    columns={[
-                      { title: '年月', key: 'month', render: (_, r) => `${r.year}-${String(r.month).padStart(2, '0')}` },
-                      { title: '病虫害类型', dataIndex: 'pestType', key: 'pestType' },
-                      { title: '监测点', dataIndex: 'monitoringPointCount', key: 'mpc' },
-                      { title: '诱捕器', dataIndex: 'trapCount', key: 'tc' },
-                      { title: '虫口总数', dataIndex: 'totalPestCount', key: 'tpc' },
-                      { 
-                        title: '平均密度', 
-                        dataIndex: 'avgDensity', 
-                        key: 'ad',
-                        render: (val, record) => (
-                          <span>
-                            {val}
-                            {val < record.lastYearAvgDensity 
-                              ? <Tag color="green" style={{ marginLeft: 4 }}>↓下降</Tag>
-                              : <Tag color="red" style={{ marginLeft: 4 }}>↑上升</Tag>
-                            }
-                          </span>
-                        )
-                      },
-                      { title: '去年同期', dataIndex: 'lastYearAvgDensity', key: 'lyad' },
-                      { title: '处置面积(亩)', dataIndex: 'disposalArea', key: 'da' },
-                      { title: '清理疫木', dataIndex: 'woodCount', key: 'wc' }
+              <Col xs={24} md={8}>
+                <Card title="虫口密度同比变化">
+                  <ReactECharts option={monthlyDensityChangeOption} style={{ height: 280 }} />
+                </Card>
+              </Col>
+              <Col xs={24} md={8}>
+                <Card 
+                  title="月度概览" 
+                  extra={
+                    <Space>
+                      <Select
+                        value={selectedYear}
+                        style={{ width: 100 }}
+                        onChange={setSelectedYear}
+                      >
+                        {[2024, 2025, 2026, 2027].map(y => (
+                          <Option key={y} value={y}>{y}年</Option>
+                        ))}
+                      </Select>
+                      <Select
+                        value={selectedMonth}
+                        style={{ width: 80 }}
+                        onChange={setSelectedMonth}
+                      >
+                        {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                          <Option key={m} value={m}>{m}月</Option>
+                        ))}
+                      </Select>
+                    </Space>
+                  }
+                >
+                  <List
+                    dataSource={[
+                      { label: '新增样本', value: monthlyStats.newSamples, unit: '份' },
+                      { label: '群众上报', value: monthlyStats.newReports, unit: '起' },
+                      { label: '完成工单', value: monthlyStats.completedOrders, unit: '单' },
+                      { label: '清理疫木', value: monthlyStats.totalWood, unit: '株' },
+                      { label: '处置面积', value: monthlyStats.disposalArea, unit: '亩' },
+                      { label: '药剂使用', value: monthlyStats.pesticideUsage, unit: '单位' },
                     ]}
+                    renderItem={item => (
+                      <List.Item>
+                        <span>{item.label}</span>
+                        <span style={{ fontWeight: 600 }}>{item.value} {item.unit}</span>
+                      </List.Item>
+                    )}
                   />
+                  <Divider style={{ margin: '8px 0' }} />
+                  <div style={{ fontSize: 12, color: '#666' }}>
+                    虫口密度同比：
+                    <span style={{ 
+                      color: Number(monthlyStats.densityChange) > 0 ? '#f5222d' : '#52c41a',
+                      fontWeight: 600,
+                      marginLeft: 8
+                    }}>
+                      {Number(monthlyStats.densityChange) > 0 ? '+' : ''}{monthlyStats.densityChange}%
+                    </span>
+                  </div>
                 </Card>
               </Col>
             </Row>
+
+            <Card 
+              title="月度评估数据" 
+              style={{ marginTop: 16 }}
+              extra={
+                <Space>
+                  <Button icon={<BarChartOutlined />} onClick={handleGenerateMonthlyReport}>
+                    生成月报
+                  </Button>
+                  <Button icon={<ExportOutlined />} onClick={handleExportMonthly}>
+                    导出月报
+                  </Button>
+                </Space>
+              }
+            >
+              <Table
+                dataSource={evaluationRecords}
+                rowKey="id"
+                pagination={false}
+                size="small"
+                columns={[
+                  { title: '年月', key: 'month', render: (_, r) => `${r.year}-${String(r.month).padStart(2, '0')}` },
+                  { title: '病虫害类型', dataIndex: 'pestType', key: 'pestType' },
+                  { title: '监测点', dataIndex: 'monitoringPointCount', key: 'mpc' },
+                  { title: '诱捕器', dataIndex: 'trapCount', key: 'tc' },
+                  { title: '虫口总数', dataIndex: 'totalPestCount', key: 'tpc' },
+                  { 
+                    title: '平均密度', 
+                    dataIndex: 'avgDensity', 
+                    key: 'ad',
+                    render: (val, record) => (
+                      <span>
+                        {val}
+                        {val < record.lastYearAvgDensity 
+                          ? <Tag color="green" style={{ marginLeft: 4 }}>↓下降</Tag>
+                          : <Tag color="red" style={{ marginLeft: 4 }}>↑上升</Tag>
+                        }
+                      </span>
+                    )
+                  },
+                  { title: '去年同期', dataIndex: 'lastYearAvgDensity', key: 'lyad' },
+                  { title: '处置面积(亩)', dataIndex: 'disposalArea', key: 'da' },
+                  { title: '清理疫木', dataIndex: 'woodCount', key: 'wc' }
+                ]}
+              />
+            </Card>
+          </TabPane>
+
+          <TabPane tab="月报管理" key="monthly">
+            <Card
+              extra={
+                <Space>
+                  <Button type="primary" icon={<PlusOutlined />} onClick={handleGenerateMonthlyReport}>
+                    生成月报
+                  </Button>
+                </Space>
+              }
+            >
+              {monthlyReports.length > 0 ? (
+                <Table
+                  columns={monthlyReportColumns}
+                  dataSource={monthlyReports.sort((a, b) => 
+                    b.year * 12 + b.month - (a.year * 12 + a.month)
+                  )}
+                  rowKey="id"
+                  pagination={{ pageSize: 10 }}
+                />
+              ) : (
+                <Empty description="暂无月报数据，请点击上方按钮生成月报" />
+              )}
+            </Card>
           </TabPane>
 
           <TabPane tab="历史病例" key="cases">
@@ -669,6 +1116,39 @@ ${monthData.year}年${monthData.month}月
             <TextArea rows={4} placeholder="请输入处理结果说明" />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title="月报详情"
+        open={viewReportModalVisible}
+        onCancel={() => setViewReportModalVisible(false)}
+        width={700}
+        footer={[
+          <Button key="close" onClick={() => setViewReportModalVisible(false)}>关闭</Button>,
+          <Button key="print" icon={<PrinterOutlined />} onClick={() => viewingMonthlyReport && handlePrintMonthlyReport(viewingMonthlyReport)}>
+            打印
+          </Button>
+        ]}
+      >
+        {viewingMonthlyReport && (
+          <div ref={printRef}>
+            <h2 style={{ textAlign: 'center', marginBottom: 20 }}>
+              林业病虫害监测月报 - {viewingMonthlyReport.year}年{viewingMonthlyReport.month}月
+            </h2>
+            <Descriptions bordered column={2}>
+              <Descriptions.Item label="生成时间">{viewingMonthlyReport.generatedDate}</Descriptions.Item>
+              <Descriptions.Item label="生成人">{viewingMonthlyReport.generatedBy}</Descriptions.Item>
+              <Descriptions.Item label="新增样本">{viewingMonthlyReport.newSamples} 份</Descriptions.Item>
+              <Descriptions.Item label="群众上报">{viewingMonthlyReport.publicReports} 起</Descriptions.Item>
+              <Descriptions.Item label="完成工单">{viewingMonthlyReport.completedOrders} 单</Descriptions.Item>
+              <Descriptions.Item label="清理疫木">{viewingMonthlyReport.woodCount} 株</Descriptions.Item>
+              <Descriptions.Item label="处置面积">{viewingMonthlyReport.disposalArea} 亩</Descriptions.Item>
+              <Descriptions.Item label="药剂使用">{viewingMonthlyReport.pesticideUsage} 单位</Descriptions.Item>
+              <Descriptions.Item label="本月平均密度">{viewingMonthlyReport.avgDensity}</Descriptions.Item>
+              <Descriptions.Item label="去年同期密度">{viewingMonthlyReport.lastYearAvgDensity}</Descriptions.Item>
+            </Descriptions>
+          </div>
+        )}
       </Modal>
     </div>
   )
